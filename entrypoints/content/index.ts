@@ -15,7 +15,7 @@ import { createEmptyProfile, profileSchema } from "../../src/schemas/profile";
 import { createEmptySensitiveDefaults, sensitiveDefaultsSchema } from "../../src/schemas/sensitiveDefaults";
 import { findBestAnswerMatch } from "../../src/answerBank/matching";
 import { attachFileToInput, setTextValue, isEmpty } from "../../src/autofill/setValue";
-import { db } from "../../src/storage/db";
+import { getCvFileRequestSchema, getCvFileResultSchema } from "../../src/messaging/documentTypes";
 import { isAutomationBlocked } from "../../src/sites/access";
 import { getAnswerBankRequestSchema, type AnswerBankEntrySummary } from "../../src/messaging/answerBankTypes";
 import { fieldsForMapping } from "../../src/llm/prompts/mapFields";
@@ -88,9 +88,11 @@ export default defineContentScript({
       const outcomes: FillOutcome[] = [];
       const fileFields = fields.filter((field) => field.kind === "file");
       if (fileFields.length === 0) return outcomes;
-      const stored = await db.documents.get("cv");
-      if (!stored) return outcomes;
-      const file = new File([stored.blob], stored.fileName, { type: stored.mimeType });
+      const response = await chrome.runtime.sendMessage(getCvFileRequestSchema.parse({ type: "get-cv-file" }));
+      const parsedResponse = getCvFileResultSchema.safeParse(response);
+      if (!parsedResponse.success || !parsedResponse.data.ok) return outcomes;
+      const stored = parsedResponse.data;
+      const file = new File([stored.data], stored.fileName, { type: stored.mimeType });
       for (const field of fileFields) {
         const element = field.element as HTMLInputElement;
         if (element.files && element.files.length > 0) {

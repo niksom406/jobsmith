@@ -3,6 +3,7 @@ import { mapUnmatchedFields } from "../src/llm/prompts/mapFields";
 import { testOpenAiConnection } from "../src/llm/testConnection";
 import { getAnswerBankRequestSchema, saveAnswerRequestSchema } from "../src/messaging/answerBankTypes";
 import { draftAnswersRequestSchema } from "../src/messaging/draftTypes";
+import { getCvFileRequestSchema } from "../src/messaging/documentTypes";
 import { mapFieldsRequestSchema } from "../src/messaging/mapFieldsTypes";
 import { testConnectionRequestSchema, testConnectionResultSchema } from "../src/messaging/types";
 import { createDefaultSettings, settingsSchema } from "../src/schemas/settings";
@@ -70,6 +71,20 @@ export default defineBackground(() => {
           })),
         )
         .then(sendResponse);
+      return true;
+    }
+
+    const cvFileRequest = getCvFileRequestSchema.safeParse(message);
+    if (cvFileRequest.success) {
+      void (async () => {
+        const stored = await db.documents.get("cv");
+        if (!stored) {
+          sendResponse({ ok: false });
+          return;
+        }
+        const data = await stored.blob.arrayBuffer();
+        sendResponse({ ok: true, fileName: stored.fileName, mimeType: stored.mimeType, data });
+      })();
       return true;
     }
 
