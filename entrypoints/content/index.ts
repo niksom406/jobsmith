@@ -20,6 +20,7 @@ import { getAnswerBankRequestSchema, type AnswerBankEntrySummary } from "../../s
 import { fieldsForMapping } from "../../src/llm/prompts/mapFields";
 import { mapFieldsRequestSchema, mapFieldsResultSchema } from "../../src/messaging/mapFieldsTypes";
 import { chromeLocalArea, LOCAL_KEYS } from "../../src/storage/localStore";
+import { fillAriaComboboxes, fillWorkdayDateGroups, type WidgetOutcome } from "../../src/autofill/workdayWidgets";
 import type { DetectedField, FieldMatch, ProfileValueMap } from "../../src/autofill/types";
 import type { FillOutcome, UndoEntry as UndoEntryType } from "../../src/autofill/fill";
 import { defineContentScript } from "wxt/utils/define-content-script";
@@ -257,6 +258,14 @@ export default defineContentScript({
 
           const fileOutcomes = await attachStoredCvToFileInputs(fields);
 
+          // Workday (and anything else using the same ARIA pattern) renders most pickers as custom
+          // widgets rather than native <select>/<input type="date">, so they never show up in `fields`
+          // at all; this runs as a separate pass over the live DOM instead of through fillFields.
+          const widgetOutcomes: WidgetOutcome[] =
+            adapterForHostname(window.location.hostname).id === "workday"
+              ? [...(await fillAriaComboboxes(document, values)), ...fillWorkdayDateGroups(document, values)]
+              : [];
+
           lastUndo = [...undo, ...fromBank.undo, ...fromMapping.undo, ...sensitiveResult.undo];
           const allOutcomes = [...outcomes, ...fromBank.outcomes, ...fromMapping.outcomes, ...sensitiveResult.outcomes, ...fileOutcomes];
 
@@ -270,7 +279,17 @@ export default defineContentScript({
           for (const field of fromMapping.stillUnmatched) {
             summaries.push({ id: field.id, label: field.label, kind: field.kind, status: "unmatched" });
           }
-          sendResponse({ blocked: false, blockedReason: "", totalFields: fields.length, fields: summaries });
+          widgetOutcomes.forEach((widget, index) => {
+            summaries.push({
+              id: `workday-widget-${index}`,
+              label: widget.label,
+              kind: "select",
+              status: widget.status === "filled" || widget.status === "skipped_not_empty" || widget.status === "skipped_sensitive"
+                ? widget.status
+                : "unmatched",
+            });
+          });
+          sendResponse({ blocked: false, blockedReason: "", totalFields: fields.length + widgetOutcomes.length, fields: summaries });
         })();
         return true;
       }

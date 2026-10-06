@@ -34,6 +34,24 @@ function normalize(value: string): string {
   return value.toLowerCase().replace(/[_-]+/g, " ").replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
 }
 
+/**
+ * Label-only version of the synonym match, for widgets that aren't a native input/select/textarea (for
+ * example an ARIA combobox button) and so never go through `detectFields`. Same exact-then-alias rule,
+ * same no-guess-on-weak-match behaviour as `matchFieldHeuristically`.
+ */
+export function matchLabelToProfileKey(label: string): string | null {
+  const haystack = normalize(label);
+  if (!haystack) return null;
+
+  for (const [profileKey, synonyms] of Object.entries(SYNONYMS)) {
+    if (synonyms.some((synonym) => normalize(synonym) === haystack)) return profileKey;
+  }
+  for (const [profileKey, synonyms] of Object.entries(SYNONYMS)) {
+    if (synonyms.some((synonym) => haystack.includes(normalize(synonym)))) return profileKey;
+  }
+  return null;
+}
+
 const AUTOCOMPLETE_MAP: Record<string, string> = {
   name: "name.full",
   "given-name": "name.first",

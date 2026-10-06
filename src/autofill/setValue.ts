@@ -15,7 +15,7 @@ function nativeSetter(element: HTMLElement): ((value: string) => void) | null {
   return null;
 }
 
-function dispatchChangeEvents(element: HTMLElement): void {
+export function dispatchChangeEvents(element: HTMLElement): void {
   element.dispatchEvent(new Event("input", { bubbles: true }));
   element.dispatchEvent(new Event("change", { bubbles: true }));
   element.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
