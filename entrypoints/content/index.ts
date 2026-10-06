@@ -17,8 +17,10 @@ import { attachFileToInput, setTextValue, isEmpty } from "../../src/autofill/set
 import { db } from "../../src/storage/db";
 import { isAutomationBlocked } from "../../src/sites/access";
 import { getAnswerBankRequestSchema, type AnswerBankEntrySummary } from "../../src/messaging/answerBankTypes";
+import { fieldsForMapping } from "../../src/llm/prompts/mapFields";
+import { mapFieldsRequestSchema, mapFieldsResultSchema } from "../../src/messaging/mapFieldsTypes";
 import { chromeLocalArea, LOCAL_KEYS } from "../../src/storage/localStore";
-import type { DetectedField } from "../../src/autofill/types";
+import type { DetectedField, FieldMatch, ProfileValueMap } from "../../src/autofill/types";
 import type { FillOutcome, UndoEntry as UndoEntryType } from "../../src/autofill/fill";
 import { defineContentScript } from "wxt/utils/define-content-script";
 
@@ -141,6 +143,48 @@ export default defineContentScript({
       return { outcomes, undo, stillUnmatched };
     }
 
+    /**
+     * Layer 2 fallback: asks the background to map still-unmatched fields to a profile key, sending
+     * only each field's id/label/kind/option labels — never a value — then fills only the mappings the
+     * model marked confident, through the same dropdown-matching/no-guess path as Layer 1.
+     */
+    async function fillFromLlmMapping(
+      unmatched: DetectedField[],
+      values: ProfileValueMap,
+    ): Promise<{ outcomes: FillOutcome[]; undo: UndoEntryType[]; stillUnmatched: DetectedField[] }> {
+      const eligible = unmatched.filter((field) => field.kind !== "textarea" && field.kind !== "file");
+      if (eligible.length === 0) {
+        return { outcomes: [], undo: [], stillUnmatched: unmatched };
+      }
+      let result: unknown;
+      try {
+        result = await chrome.runtime.sendMessage(
+          mapFieldsRequestSchema.parse({
+            type: "map-fields",
+            payload: { fields: fieldsForMapping(eligible), profileKeys: Object.keys(values) },
+          }),
+        );
+      } catch {
+        return { outcomes: [], undo: [], stillUnmatched: unmatched };
+      }
+      const parsed = mapFieldsResultSchema.safeParse(result);
+      if (!parsed.success || !parsed.data.ok) {
+        return { outcomes: [], undo: [], stillUnmatched: unmatched };
+      }
+
+      const mappedFieldIds = new Set<string>();
+      const matches: FieldMatch[] = [];
+      for (const mapping of parsed.data.mappings) {
+        if (!mapping.confident) continue;
+        mappedFieldIds.add(mapping.fieldId);
+        matches.push({ fieldId: mapping.fieldId, profileKey: mapping.profileKey, confidence: "fuzzy" });
+      }
+
+      const { outcomes, undo } = fillFields(eligible, matches, values);
+      const stillUnmatched = unmatched.filter((field) => !mappedFieldIds.has(field.id) || !outcomes.some((outcome) => outcome.fieldId === field.id && outcome.status === "filled"));
+      return { outcomes, undo, stillUnmatched };
+    }
+
     async function loadProfileAndPreferences() {
       const stored = await chromeLocalArea.get([LOCAL_KEYS.profile, LOCAL_KEYS.preferences, LOCAL_KEYS.sensitiveDefaults]);
       const profile = profileSchema.safeParse(stored[LOCAL_KEYS.profile]);
@@ -209,11 +253,12 @@ export default defineContentScript({
 
           const bank = await fetchAnswerBank();
           const fromBank = fillFromAnswerBank(unmatched, bank);
+          const fromMapping = await fillFromLlmMapping(fromBank.stillUnmatched, values);
 
           const fileOutcomes = await attachStoredCvToFileInputs(fields);
 
-          lastUndo = [...undo, ...fromBank.undo, ...sensitiveResult.undo];
-          const allOutcomes = [...outcomes, ...fromBank.outcomes, ...sensitiveResult.outcomes, ...fileOutcomes];
+          lastUndo = [...undo, ...fromBank.undo, ...fromMapping.undo, ...sensitiveResult.undo];
+          const allOutcomes = [...outcomes, ...fromBank.outcomes, ...fromMapping.outcomes, ...sensitiveResult.outcomes, ...fileOutcomes];
 
           const byId = new Map(fields.map((field) => [field.id, field]));
           const summaries: FieldSummary[] = allOutcomes.map((outcome) => ({
@@ -222,7 +267,7 @@ export default defineContentScript({
             kind: byId.get(outcome.fieldId)?.kind ?? "text",
             status: outcome.status,
           }));
-          for (const field of fromBank.stillUnmatched) {
+          for (const field of fromMapping.stillUnmatched) {
             summaries.push({ id: field.id, label: field.label, kind: field.kind, status: "unmatched" });
           }
           sendResponse({ blocked: false, blockedReason: "", totalFields: fields.length, fields: summaries });
