@@ -7,8 +7,12 @@ export class ExtractionError extends Error {
 
 async function extractPdfText(buffer: ArrayBuffer): Promise<string> {
   const pdfjs = await import("pdfjs-dist");
-  // No worker file is bundled; running the parser on the main/background thread is fine for this file size.
-  pdfjs.GlobalWorkerOptions.workerSrc = "";
+  // Modern pdf.js has no "run on main thread" fallback for an empty workerSrc — it throws
+  // "No GlobalWorkerOptions.workerSrc specified." instead. The worker script is copied into
+  // public/pdf.worker.min.mjs (see package.json's postinstall) and shipped as a plain static
+  // asset, so it needs a real extension URL, not a CDN (CSP wouldn't allow a remote script
+  // anyway, and this all needs to work fully offline).
+  pdfjs.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("pdf.worker.min.mjs");
   const doc = await pdfjs.getDocument({ data: buffer }).promise;
   const pages: string[] = [];
   for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {

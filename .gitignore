@@ -7,3 +7,7 @@ dist/
 coverage/
 playwright-report/
 test-results/
+
+# Copied from node_modules/pdfjs-dist by scripts/copyPdfWorker.mjs (npm install's postinstall);
+# regenerated automatically, not meant to be committed.
+public/pdf.worker.min.mjs

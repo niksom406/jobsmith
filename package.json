@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "postinstall": "node scripts/copyPdfWorker.mjs",
     "dev": "wxt",
     "build": "wxt build",
     "zip": "wxt zip",
