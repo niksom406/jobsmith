@@ -15,7 +15,11 @@ export const getCvFileResultSchema = z.discriminatedUnion("ok", [
     ok: z.literal(true),
     fileName: z.string(),
     mimeType: z.string(),
-    data: z.instanceof(ArrayBuffer),
+    // Base64, not a raw ArrayBuffer: a plain string survives chrome.runtime.sendMessage and Zod's
+    // instanceof checks reliably across the background/content-script boundary. Binary types can
+    // come back from structured clone tied to a different global's constructors depending on the
+    // Chrome version and call shape, which makes `instanceof ArrayBuffer` fail unpredictably.
+    dataBase64: z.string(),
   }),
   z.strictObject({ ok: z.literal(false) }),
 ]);

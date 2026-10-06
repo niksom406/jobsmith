@@ -4,6 +4,7 @@ import { testOpenAiConnection } from "../src/llm/testConnection";
 import { getAnswerBankRequestSchema, saveAnswerRequestSchema } from "../src/messaging/answerBankTypes";
 import { draftAnswersRequestSchema } from "../src/messaging/draftTypes";
 import { getCvFileRequestSchema } from "../src/messaging/documentTypes";
+import { blobToBase64 } from "../src/storage/bytes";
 import { mapFieldsRequestSchema } from "../src/messaging/mapFieldsTypes";
 import { testConnectionRequestSchema, testConnectionResultSchema } from "../src/messaging/types";
 import { createDefaultSettings, settingsSchema } from "../src/schemas/settings";
@@ -82,8 +83,8 @@ export default defineBackground(() => {
           sendResponse({ ok: false });
           return;
         }
-        const data = await stored.blob.arrayBuffer();
-        sendResponse({ ok: true, fileName: stored.fileName, mimeType: stored.mimeType, data });
+        const dataBase64 = await blobToBase64(stored.blob);
+        sendResponse({ ok: true, fileName: stored.fileName, mimeType: stored.mimeType, dataBase64 });
       })();
       return true;
     }

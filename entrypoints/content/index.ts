@@ -16,6 +16,7 @@ import { createEmptySensitiveDefaults, sensitiveDefaultsSchema } from "../../src
 import { findBestAnswerMatch } from "../../src/answerBank/matching";
 import { attachFileToInput, setTextValue, isEmpty } from "../../src/autofill/setValue";
 import { getCvFileRequestSchema, getCvFileResultSchema } from "../../src/messaging/documentTypes";
+import { base64ToBytes } from "../../src/storage/bytes";
 import { isAutomationBlocked } from "../../src/sites/access";
 import { getAnswerBankRequestSchema, type AnswerBankEntrySummary } from "../../src/messaging/answerBankTypes";
 import { fieldsForMapping } from "../../src/llm/prompts/mapFields";
@@ -83,16 +84,29 @@ export default defineContentScript({
     watchLongTextFields();
     new MutationObserver(() => watchLongTextFields()).observe(document.body, { childList: true, subtree: true });
 
-    /** Attaches the stored CV to any empty file input, the user's own CV only — never auto-submitted. */
+    const RESUME_FIELD_HINTS = /resume|\bcv\b|curriculum/i;
+    const NON_RESUME_FILE_HINTS = /cover.?letter|transcript|portfolio|writing.?sample/i;
+
+    /** True only for a file input that looks like a resume/CV upload — never a cover letter or
+     * other attachment, since we only have one stored document and attaching it to the wrong
+     * field would be worse than leaving it for the user to handle themselves. */
+    function looksLikeResumeField(field: DetectedField): boolean {
+      const element = field.element as HTMLInputElement;
+      const text = `${field.label} ${element.id} ${element.name}`;
+      if (NON_RESUME_FILE_HINTS.test(text)) return false;
+      return RESUME_FIELD_HINTS.test(text);
+    }
+
+    /** Attaches the stored CV to the resume file input only, the user's own CV only — never auto-submitted. */
     async function attachStoredCvToFileInputs(fields: DetectedField[]) {
       const outcomes: FillOutcome[] = [];
-      const fileFields = fields.filter((field) => field.kind === "file");
+      const fileFields = fields.filter((field) => field.kind === "file" && looksLikeResumeField(field));
       if (fileFields.length === 0) return outcomes;
       const response = await chrome.runtime.sendMessage(getCvFileRequestSchema.parse({ type: "get-cv-file" }));
       const parsedResponse = getCvFileResultSchema.safeParse(response);
       if (!parsedResponse.success || !parsedResponse.data.ok) return outcomes;
       const stored = parsedResponse.data;
-      const file = new File([stored.data], stored.fileName, { type: stored.mimeType });
+      const file = new File([new Uint8Array(base64ToBytes(stored.dataBase64))], stored.fileName, { type: stored.mimeType });
       for (const field of fileFields) {
         const element = field.element as HTMLInputElement;
         if (element.files && element.files.length > 0) {
