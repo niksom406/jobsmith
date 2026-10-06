@@ -1,7 +1,7 @@
-# Jobsmith — Architecture Note (v0, pending approval)
+# Jobsmith — Architecture Note
 
-This note is the plan for building Jobsmith. No application code is written yet.
-Per the brief, I'll stop after each phase, run tests, and summarize before continuing.
+This note is the plan for building Jobsmith. Phase 1 (foundation) is implemented. Later phases have not started.
+Per the brief, each phase stops for tests and a summary before the next one begins.
 
 ## 1. Toolchain: WXT (not CRXJS)
 
@@ -44,7 +44,7 @@ jobsmith/
     storage/
       localStore.ts           # typed chrome.storage.local wrapper (get/set/subscribe + migration runner)
       db.ts                   # Dexie schema + versioned upgrade() chain
-      crypto.ts               # AES-GCM + key derivation for sensitive values
+      crypto.ts               # AES-GCM; passphrase key via PBKDF2-SHA256 (high iteration count)
     llm/
       client.ts               # OpenAI wrapper: retries, timeout, token accounting, Zod-validated JSON
       models.ts                # configurable model IDs + defaults, no hard-coding in call sites
@@ -58,7 +58,7 @@ jobsmith/
       adapters/
         base.ts  greenhouse.ts  lever.ts  ashby.ts  smartrecruiters.ts  workday.ts
     answerBank/
-      matching.ts               # normalize + local fuzzy match (see open question #3)
+      matching.ts               # normalize + local string similarity; embeddings later, opt-in
       store.ts
     jd/extractJobDescription.ts  # JSON-LD JobPosting -> heuristics -> ask user
     company/companyBrief.ts       # cache -> OpenAI web search -> About-page fetch -> ask user
@@ -93,18 +93,24 @@ Value setting uses the native-setter + event-dispatch trick (`Object.getOwnPrope
 
 One `llm/client.ts` wrapper used by every prompt: timeout + bounded retries with backoff, max-token guards, strict Zod parse of the JSON response (reject and retry-once-with-correction on failure), and a running token/cost estimate shown in the Settings → AI tab. Model IDs are plain configurable strings (`settings.models.parse`, `settings.models.answer`, `settings.models.answerBetter`) with defaults set in `src/llm/models.ts`, never inlined at call sites.
 
-> Note on defaults: a web search today returned OpenAI's current lineup as `gpt-6-luna` (cheapest/mini-class, structured outputs supported) and `gpt-6.1-sol` (stronger, lower cost than flagship) as of the model catalog at build time. I'll wire these in as the defaults for "standard" and "better quality" respectively, but since this is the kind of fact that goes stale fast and you can change it in one place, flag if you want different literal defaults.
+**Decision: model defaults.** Everyday parsing, field mapping, and answers use `gpt-6-luna`. The "better quality" toggle uses `gpt-6.1-sol`. Both are settings strings, so a later model (including `gpt-4o-mini`) can be typed in without a code change. Checked against OpenAI's catalog on 6 Oct 2026: `gpt-6-luna` is the current cheap model with structured outputs; `gpt-4o-mini` still works on the API but is an older, weaker default.
 
 Sensitive-field values are filtered out *before* any payload is constructed for the LLM — not redacted after construction. A unit test asserts no outgoing `fetch` to `api.openai.com` ever contains a sensitive-category value or label-adjacent raw string from the sensitive set, run against the request objects (not live network) in CI.
 
 ## 7. Permissions model
 
-Manifest requests only `storage`, `scripting`, `sidePanel`, `activeTab`, plus `host_permissions` for `https://api.openai.com/*` (required for the extension to function at all, touches no browsing data). All ATS site access is **optional** (`optional_host_permissions`), granted per-origin on demand — see open question #4 for the exact on-ramp UX. The README will enumerate exactly what each permission is for and what is never requested (no `<all_urls>`, no `tabs`, no `webRequest`).
+Manifest requests only `storage`, `scripting`, `sidePanel`, `activeTab`, plus `host_permissions` for `https://api.openai.com/*` (required for the extension to function at all, touches no browsing data). Site access is **optional** and granted per-origin on demand. Chrome will only show a runtime prompt for an origin that `optional_host_permissions` already covers, so that list contains `<all_urls>`. The extension does not request `<all_urls>` itself, and nothing is granted at install. There is no `tabs` or `webRequest` permission. The LinkedIn denylist still applies after a grant.
+
+**Decision: five toggles, plus a per-site enable for everything else.**
+
+- **Known ATS platforms.** Options → Sites lists Greenhouse, Lever, Ashby, SmartRecruiters, and Workday. Each toggle is off by default and calls `chrome.permissions.request` for that origin pattern only (for example `https://*.greenhouse.io/*`). Once granted, the grant persists, so the user does not re-approve on every visit. These sites get layers 1–3, including the platform adapter.
+- **Any other company career page.** A separate "Enable Jobsmith on this site" action (side panel or toolbar click) calls `chrome.permissions.request` for the current tab's origin only. That site runs on layers 1 and 2 (heuristics + LLM field mapping). There is no platform adapter. The LinkedIn / Easy-Apply hostname denylist still applies and cannot be overridden by a grant.
+- The README enumerates every permission. `tabs` and `webRequest` are not requested. `<all_urls>` is listed only as an optional host pattern so a single site can be approved later; it is not granted up front.
 
 ## 8. Testing strategy
 
 - **Vitest**: schemas + migrations, matching/fuzzy logic, heuristics synonym tables, LLM client (mocked fetch), crypto round-trip, sensitive-field filter (the "never sent to LLM" guarantee).
-- **Playwright**: loads the built unpacked extension into a persistent Chromium context, opens local HTML fixtures (saved real markup from Greenhouse/Lever/etc. test or demo postings — not live scraping during tests), and asserts fill rates per the ≥90% acceptance criterion. See open question #5 on sourcing fixtures.
+- **Playwright**: loads the built unpacked extension into a persistent Chromium context, opens local HTML fixtures, and asserts fill rates per the ≥90% acceptance criterion. Fixtures are saved copies of public Greenhouse and Lever application pages, captured view-only in Phase 3. Tests never hit the live sites and never submit a form.
 
 ## 9. Phases (unchanged from brief, restated for sign-off)
 
@@ -118,12 +124,13 @@ Manifest requests only `storage`, `scripting`, `sidePanel`, `activeTab`, plus `h
 
 I'll stop after each phase for review and tests before moving on.
 
-## 10. Open questions (need your call before I start Phase 1)
+## 10. Decisions
 
-1. **Sensitive-value encryption primitive**: PBKDF2-SHA256 (native Web Crypto, zero extra bundle size) vs Argon2id (stronger, needs a ~100KB+ WASM dependency). I'd default to PBKDF2 with a high iteration count unless you want Argon2.
-2. **Answer-bank fuzzy matching**: start local-only (normalized text + a lightweight string-similarity algorithm, no network call) for Phase 4, and treat OpenAI embeddings as a later "better quality" opt-in — or do you want embeddings from day one?
-3. **Host-permission UX**: (a) ship with the 5 known ATS domains pre-listed as one-click toggles in Options → Sites (each toggle calls `chrome.permissions.request` for just that origin, off by default), or (b) rely purely on `activeTab` + an in-page "Enable Jobsmith on this site?" prompt the first time the content script's manifest-declared matches don't cover the current host. (a) is more discoverable, (b) is more minimal/ad hoc.
-4. **Test fixtures**: for Phase 3 I'd like to capture a couple of real, public Greenhouse and Lever job-posting pages (view-only, no form submission) as static HTML fixtures via the browser tool. OK to do that, or do you have fixtures/sites you'd prefer I use instead?
-5. **Default model names**: confirm you're fine with the defaults noted in §6 (or give me the exact strings you want), given model catalogs change over time.
+### Decided
 
-Once you confirm/adjust the above, I'll start Phase 1.
+1. **Sensitive-value encryption: PBKDF2-SHA256.** Native Web Crypto, no extra dependency. High iteration count (current OWASP guidance for SHA-256, at least 600,000). AES-GCM encrypts the saved sensitive values. Argon2id is not used.
+2. **Known ATS sites: five toggles, not a blanket grant.** Options → Sites lists Greenhouse, Lever, Ashby, SmartRecruiters, and Workday. Each is off by default and requests only that origin pattern. `<all_urls>` is an optional manifest pattern so other sites can be enabled one at a time; it is never the permission that gets requested.
+3. **Other sites still work, without an adapter.** "Enable Jobsmith on this site" requests permission for the current tab's origin only. Fill uses layers 1 and 2. The LinkedIn / Easy-Apply denylist still blocks those hosts. See §7.
+4. **Answer-bank matching is local-only in Phase 4.** Normalize the question text, then score it with a lightweight string-similarity algorithm. No network call and no OpenAI embeddings on the default path. Embeddings can be added later as an opt-in under the "better quality" setting.
+5. **Test fixtures come from public postings.** In Phase 3, capture a couple of real public Greenhouse and Lever application pages as static HTML (view-only, no form submission). Playwright runs against those saved files, not the live sites.
+6. **Default models.** `gpt-6-luna` for parsing, field mapping, and answers. `gpt-6.1-sol` when "better quality" is on. Both are editable in AI settings. See §6.
