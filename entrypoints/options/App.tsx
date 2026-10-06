@@ -5,6 +5,7 @@ import { sensitiveDefaultsSchema, type SensitiveDefaults } from "../../src/schem
 import { settingsSchema, type Settings } from "../../src/schemas/settings";
 import { LOCAL_KEYS, activeArea, extensionStorageAvailable, saveStored } from "../../src/storage/localStore";
 import { loadLocalBundle, type LocalBundle } from "../../src/storage/transfer";
+import { CvOnboarding } from "./CvOnboarding";
 import { PreferencesSection } from "./PreferencesSection";
 import { ProfileSection } from "./ProfileSection";
 import {
@@ -19,6 +20,7 @@ import {
 } from "./OtherSections";
 
 const NAV = [
+  ["cv", "Upload CV"],
   ["profile", "Profile"],
   ["preferences", "Preferences"],
   ["documents", "Documents"],
@@ -92,6 +94,9 @@ export default function App() {
           </p>
         )}
         {bundle === null ? <p className="text-sm text-muted">Loading…</p> : null}
+        {bundle && section === "cv" && bundle.settings.ok ? (
+          <CvOnboarding settings={bundle.settings.value} onProfileSaved={saveProfile} onPreferencesSaved={savePreferences} />
+        ) : null}
         {bundle && section === "profile" ? (
           bundle.profile.ok ? (
             <ProfileSection profile={bundle.profile.value} onSave={saveProfile} />
