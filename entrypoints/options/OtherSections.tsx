@@ -5,13 +5,16 @@ import type { DocumentMeta } from "../../src/schemas/documents";
 import {
   sensitiveCategoryIds,
   sensitiveCategoryLabels,
+  type SensitiveCategoryId,
   type SensitiveDefaults,
 } from "../../src/schemas/sensitiveDefaults";
 import { settingsSchema, type Settings } from "../../src/schemas/settings";
 import { KNOWN_ATS } from "../../src/sites/access";
 import { db } from "../../src/storage/db";
+import { decryptWithPassphrase, encryptWithPassphrase, type EncryptedValue } from "../../src/storage/crypto";
 import { deleteAllData, dumpRaw, exportAll, importAll } from "../../src/storage/transfer";
 import { activeArea } from "../../src/storage/localStore";
+import { clearSessionPassphrase, getSessionPassphrase, setSessionPassphrase } from "../../src/storage/sessionPassphrase";
 import { downloadJson } from "../../src/ui/download";
 import { EnableSiteForm } from "../../src/ui/EnableSiteForm";
 import { testConnectionRequestSchema, testConnectionResultSchema } from "../../src/messaging/types";
@@ -109,6 +112,17 @@ export function AnswerBankSection() {
   );
 }
 
+type EditableValues = Record<SensitiveCategoryId, string>;
+
+function plainValuesFrom(defaults: SensitiveDefaults): EditableValues {
+  const values = {} as EditableValues;
+  for (const id of sensitiveCategoryIds) {
+    const choice = defaults.categories[id];
+    values[id] = choice.encrypted ? "" : choice.savedValue;
+  }
+  return values;
+}
+
 export function SensitiveSection({
   defaults,
   onSave,
@@ -117,12 +131,105 @@ export function SensitiveSection({
   onSave: (defaults: SensitiveDefaults) => Promise<void>;
 }) {
   const [draft, setDraft] = useState(defaults);
+  const [editableValues, setEditableValues] = useState<EditableValues>(() => plainValuesFrom(defaults));
+  const [encryptionEnabled, setEncryptionEnabled] = useState(() => sensitiveCategoryIds.some((id) => defaults.categories[id].encrypted));
+  const [vaultPassphrase, setVaultPassphrase] = useState<string | null>(null);
+  const [locked, setLocked] = useState(() => sensitiveCategoryIds.some((id) => defaults.categories[id].encrypted));
+  const [unlockInput, setUnlockInput] = useState("");
+  const [newPassphrase, setNewPassphrase] = useState("");
+  const [confirmPassphrase, setConfirmPassphrase] = useState("");
+  const [vaultError, setVaultError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     setDraft(defaults);
+    const hasEncrypted = sensitiveCategoryIds.some((id) => defaults.categories[id].encrypted);
+    setEncryptionEnabled(hasEncrypted);
+    if (!hasEncrypted) {
+      setLocked(false);
+      setEditableValues(plainValuesFrom(defaults));
+      return;
+    }
+    setLocked(true);
+    void getSessionPassphrase().then((cached) => {
+      if (cached) void unlock(cached, defaults);
+    });
+    // Re-run only when a different stored record arrives from the parent, not on every local edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaults]);
+
+  async function unlock(passphrase: string, source: SensitiveDefaults): Promise<boolean> {
+    const next = {} as EditableValues;
+    try {
+      for (const id of sensitiveCategoryIds) {
+        const choice = source.categories[id];
+        next[id] = choice.encrypted && choice.savedValue ? await decryptWithPassphrase(JSON.parse(choice.savedValue) as EncryptedValue, passphrase) : choice.savedValue;
+      }
+    } catch {
+      setVaultError("That passphrase did not unlock the saved values.");
+      return false;
+    }
+    setEditableValues(next);
+    setVaultPassphrase(passphrase);
+    setLocked(false);
+    setVaultError(null);
+    await setSessionPassphrase(passphrase);
+    return true;
+  }
+
+  async function setUpPassphrase() {
+    if (newPassphrase.length < 8) {
+      setVaultError("Use a passphrase of at least 8 characters.");
+      return;
+    }
+    if (newPassphrase !== confirmPassphrase) {
+      setVaultError("The two passphrases don't match.");
+      return;
+    }
+    setVaultPassphrase(newPassphrase);
+    setEncryptionEnabled(true);
+    setLocked(false);
+    setVaultError(null);
+    setNewPassphrase("");
+    setConfirmPassphrase("");
+    await setSessionPassphrase(newPassphrase);
+  }
+
+  async function turnOffEncryption() {
+    setEncryptionEnabled(false);
+    setVaultPassphrase(null);
+    await clearSessionPassphrase();
+  }
+
+  async function handleSave() {
+    setPending(true);
+    setNotice(null);
+    try {
+      const categories = {} as SensitiveDefaults["categories"];
+      for (const id of sensitiveCategoryIds) {
+        const choice = draft.categories[id];
+        const plainText = editableValues[id] ?? "";
+        if (choice.mode !== "use_saved_answer" || !encryptionEnabled) {
+          categories[id] = { mode: choice.mode, savedValue: choice.mode === "use_saved_answer" ? plainText : "", encrypted: false };
+          continue;
+        }
+        if (!vaultPassphrase) {
+          throw new Error("Set a passphrase above before saving a protected value.");
+        }
+        const encrypted = await encryptWithPassphrase(plainText, vaultPassphrase);
+        categories[id] = { mode: "use_saved_answer", savedValue: JSON.stringify(encrypted), encrypted: true };
+      }
+      const next: SensitiveDefaults = { ...draft, categories };
+      await onSave(next);
+      setDraft(next);
+      setNotice("Sensitive-field defaults saved in this browser.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not save.");
+    } finally {
+      setPending(false);
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -130,9 +237,58 @@ export function SensitiveSection({
         <h2 className="font-serif text-3xl">Sensitive fields</h2>
         <p className="mt-1 text-sm leading-6 text-muted">
           Gender, ethnicity, disability, veteran status, sexual orientation, religion, and date of birth are never sent to the model.
-          Saved values stay in this browser. Passphrase encryption is not active yet.
+          Saved values stay in this browser, optionally behind a passphrase of your own.
         </p>
       </header>
+
+      <Card>
+        <h3 className="font-serif text-xl">Passphrase protection</h3>
+        {locked ? (
+          <div className="space-y-3">
+            <p className="text-sm text-clay">Saved values are protected. Enter your passphrase to view or change them.</p>
+            <TextField label="Passphrase" type="password" value={unlockInput} onChange={setUnlockInput} />
+            <Button
+              onClick={() => {
+                void unlock(unlockInput, draft).then((ok) => {
+                  if (ok) setUnlockInput("");
+                });
+              }}
+            >
+              Unlock
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={encryptionEnabled}
+                onChange={(event) => {
+                  setVaultError(null);
+                  if (event.target.checked) setEncryptionEnabled(true);
+                  else void turnOffEncryption();
+                }}
+              />
+              Protect saved values with a passphrase
+            </label>
+            {encryptionEnabled && !vaultPassphrase ? (
+              <div className="grid gap-4 sm:grid-cols-2">
+                <TextField label="New passphrase" type="password" value={newPassphrase} onChange={setNewPassphrase} />
+                <TextField label="Confirm passphrase" type="password" value={confirmPassphrase} onChange={setConfirmPassphrase} />
+                <Button onClick={() => void setUpPassphrase()}>Set passphrase</Button>
+              </div>
+            ) : null}
+            {encryptionEnabled && vaultPassphrase ? (
+              <p className="text-sm text-muted">
+                Passphrase set for this browser session. It is never saved to disk and is forgotten when the browser closes.
+              </p>
+            ) : null}
+            {!encryptionEnabled ? <p className="text-sm text-muted">Saved values below are stored as plain text in this browser.</p> : null}
+          </div>
+        )}
+        {vaultError ? <p className="text-sm text-clay">{vaultError}</p> : null}
+      </Card>
+
       <Card>
         {sensitiveCategoryIds.map((id) => {
           const choice = draft.categories[id];
@@ -158,33 +314,24 @@ export function SensitiveSection({
                 ]}
               />
               {choice.mode === "use_saved_answer" ? (
-                <TextField
-                  label="Saved answer"
-                  value={choice.savedValue}
-                  onChange={(savedValue) => {
-                    setNotice(null);
-                    setDraft({
-                      ...draft,
-                      categories: { ...draft.categories, [id]: { ...choice, savedValue } },
-                    });
-                  }}
-                />
+                locked ? (
+                  <p className="self-center text-sm text-clay">Unlock above to view or edit this value.</p>
+                ) : (
+                  <TextField
+                    label="Saved answer"
+                    value={editableValues[id] ?? ""}
+                    onChange={(value) => {
+                      setNotice(null);
+                      setEditableValues({ ...editableValues, [id]: value });
+                    }}
+                  />
+                )
               ) : null}
             </div>
           );
         })}
       </Card>
-      <SaveRow
-        pending={pending}
-        notice={notice}
-        onSave={() => {
-          setPending(true);
-          void onSave(draft)
-            .then(() => setNotice("Sensitive-field defaults saved in this browser."))
-            .catch((error: unknown) => setNotice(error instanceof Error ? error.message : "Could not save."))
-            .finally(() => setPending(false));
-        }}
-      />
+      <SaveRow pending={pending} notice={notice} onSave={() => void handleSave()} />
     </div>
   );
 }

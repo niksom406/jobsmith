@@ -29,7 +29,7 @@ test("prefer_not_to_say selects that option automatically", () => {
   setUpGenderSelect();
   const fields = detectFields(document);
   const defaults = createEmptySensitiveDefaults();
-  defaults.categories.gender = { mode: "prefer_not_to_say", savedValue: "" };
+  defaults.categories.gender = { mode: "prefer_not_to_say", savedValue: "", encrypted: false };
   const result = applySensitiveDefaults(fields, defaults);
   expect(result.outcomes[0]?.status).toBe("filled");
   expect((document.getElementById("gender") as HTMLSelectElement).value).toBe("x");
@@ -39,7 +39,7 @@ test("use_saved_answer fills the saved value and never leaves it for the LLM lay
   setUpGenderSelect();
   const fields = detectFields(document);
   const defaults = createEmptySensitiveDefaults();
-  defaults.categories.gender = { mode: "use_saved_answer", savedValue: "Female" };
+  defaults.categories.gender = { mode: "use_saved_answer", savedValue: "Female", encrypted: false };
   const result = applySensitiveDefaults(fields, defaults);
   expect((document.getElementById("gender") as HTMLSelectElement).value).toBe("f");
   expect(result.excludedFieldIds.has(fields[0]?.id ?? "")).toBe(true);

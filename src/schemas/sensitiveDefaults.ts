@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const SENSITIVE_DEFAULTS_VERSION = 1;
+export const SENSITIVE_DEFAULTS_VERSION = 2;
 
 export const sensitiveCategoryIds = [
   "gender",
@@ -17,6 +17,8 @@ export const sensitiveCategorySchema = z.enum(sensitiveCategoryIds);
 export const sensitiveChoiceSchema = z.strictObject({
   mode: z.enum(["ask_every_time", "prefer_not_to_say", "use_saved_answer"]),
   savedValue: z.string(),
+  /** True if `savedValue` holds a JSON-serialized `EncryptedValue` (see `src/storage/crypto.ts`) rather than plain text. */
+  encrypted: z.boolean(),
 });
 
 const choice = () => sensitiveChoiceSchema;
@@ -49,7 +51,7 @@ export const sensitiveCategoryLabels: Record<SensitiveCategoryId, string> = {
 };
 
 function askEveryTime(): SensitiveChoice {
-  return { mode: "ask_every_time", savedValue: "" };
+  return { mode: "ask_every_time", savedValue: "", encrypted: false };
 }
 
 export function createEmptySensitiveDefaults(): SensitiveDefaults {

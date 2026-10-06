@@ -9,6 +9,7 @@ import { showSaveAnswerBanner } from "../../src/autofill/saveAnswerBanner";
 import { saveAnswerRequestSchema } from "../../src/messaging/answerBankTypes";
 import type { FieldSummary, FillStatus } from "../../src/messaging/fillTypes";
 import { applySensitiveDefaults, removeSensitiveMatches } from "../../src/autofill/applySensitiveDefaults";
+import { decryptSensitiveDefaultsForFill } from "../../src/autofill/decryptSensitiveDefaults";
 import { createEmptyPreferences, preferencesSchema } from "../../src/schemas/preferences";
 import { createEmptyProfile, profileSchema } from "../../src/schemas/profile";
 import { createEmptySensitiveDefaults, sensitiveDefaultsSchema } from "../../src/schemas/sensitiveDefaults";
@@ -243,8 +244,9 @@ export default defineContentScript({
           adapterForHostname(window.location.hostname);
           const fields = detectFields(document);
           const { profile, preferences, sensitiveDefaults } = await loadProfileAndPreferences();
+          const decryptedSensitiveDefaults = await decryptSensitiveDefaultsForFill(sensitiveDefaults);
 
-          const sensitiveResult = applySensitiveDefaults(fields, sensitiveDefaults);
+          const sensitiveResult = applySensitiveDefaults(fields, decryptedSensitiveDefaults);
           const { matches, unmatched } = matchFieldsHeuristically(
             fields.filter((field) => !sensitiveResult.excludedFieldIds.has(field.id)),
           );

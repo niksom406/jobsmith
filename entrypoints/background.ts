@@ -16,6 +16,13 @@ export default defineBackground(() => {
     // Older browsers without this call still open the panel from the toolbar menu.
   });
 
+  // chrome.storage.session defaults to extension-pages-only; the content script needs to read the cached
+  // sensitive-value passphrase too (never the API key — that's only ever read in this service worker).
+  void chrome.storage.session?.setAccessLevel?.({ accessLevel: "TRUSTED_AND_UNTRUSTED_CONTEXTS" }).catch(() => {
+    // Older Chrome without chrome.storage.session: src/storage/sessionPassphrase.ts falls back to an
+    // in-memory cache scoped to whichever context set it, so encryption still works within one page.
+  });
+
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     const connectionTest = testConnectionRequestSchema.safeParse(message);
     if (connectionTest.success) {

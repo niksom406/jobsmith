@@ -16,7 +16,7 @@ test("filling a sensitive field makes no network request at all", () => {
   const fetchSpy = vi.spyOn(globalThis, "fetch");
   const fields = detectFields(document);
   const defaults = createEmptySensitiveDefaults();
-  defaults.categories.gender = { mode: "use_saved_answer", savedValue: "Female" };
+  defaults.categories.gender = { mode: "use_saved_answer", savedValue: "Female", encrypted: false };
   applySensitiveDefaults(fields, defaults);
   expect(fetchSpy).not.toHaveBeenCalled();
   fetchSpy.mockRestore();
