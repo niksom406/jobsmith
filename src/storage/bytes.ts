@@ -24,5 +24,5 @@ export async function blobToBase64(blob: Blob): Promise<string> {
 
 export function base64ToBlob(value: string, mimeType: string): Blob {
   const bytes = base64ToBytes(value);
-  return new Blob([bytes], { type: mimeType });
+  return new Blob([new Uint8Array(bytes)], { type: mimeType });
 }

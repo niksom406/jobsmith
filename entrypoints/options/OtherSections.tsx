@@ -211,6 +211,8 @@ export function SitesSection() {
         <h2 className="font-serif text-3xl">Sites</h2>
         <p className="mt-1 text-sm leading-6 text-muted">
           Nothing is granted at install. Each switch asks Chrome for that job-site host only. Other company career pages can be enabled one at a time.
+          Greenhouse and Lever have the most testing; Ashby, SmartRecruiters, and Workday use the same general field detection.
+          Workday's custom dropdowns and date pickers are not fully handled yet.
         </p>
       </header>
       <Card>
