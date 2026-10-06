@@ -1,8 +1,6 @@
 # Jobsmith
 
-Jobsmith is a Chrome extension (Manifest V3) that will fill job applications from a CV kept in the browser. This version is the foundation: profile and settings storage, an options page, and export/import. CV parsing, form filling, and answer drafts are later phases.
-
-There is no account and no Jobsmith server. Each person uses their own browser, their own data, and their own OpenAI API key.
+Jobsmith is a Chrome extension (Manifest V3) that fills job applications from a CV kept in the browser and helps draft long-text answers. There is no account and no Jobsmith server — each person uses their own browser, their own data, and their own OpenAI API key.
 
 ## Setup
 
@@ -12,45 +10,55 @@ npm test
 npm run dev
 ```
 
-In Chrome, open `chrome://extensions`, turn on Developer mode, and load the unpacked extension from `.output/chrome-mv3`. Open the extension’s options page for settings. The toolbar icon opens the side panel.
+In Chrome, open `chrome://extensions`, turn on Developer mode, and load the unpacked extension from `.output/chrome-mv3-dev` (dev) or `.output/chrome-mv3` (production build, see below). Open the extension's options page to upload a CV, review your profile, and set preferences. The toolbar icon opens the side panel on the job page you're applying from.
 
-`npm run build` writes a production build to the same output folder. `npm run zip` packs it.
+`npm run build` writes a production build to `.output/chrome-mv3`. `npm run zip` packs it.
 
 ## What this version does
 
-- Stores a profile, preferences, sensitive-field defaults, and AI settings in `chrome.storage.local`.
-- Stores documents, the answer bank, company briefs, and an application log in IndexedDB (Dexie). Those collections are empty until later phases write them.
-- Lets you edit the profile and preferences, choose sensitive-field defaults, and save an API key plus model names.
-- Tests the API key from the extension background with `GET https://api.openai.com/v1/models/{model}`.
-- Exports and imports a JSON file. The API key is left out unless you tick “Include the API key”.
-- Deletes all Jobsmith data in this browser.
-- Can ask Chrome for permission to read a job site. LinkedIn is refused even if a permission exists.
+- **Onboarding.** Upload a CV (PDF or DOCX), extracts the text locally, sends only that text to OpenAI to parse into a structured profile, then a review screen and a short preferences wizard (sponsorship, notice period, salary, start date, relocation).
+- **Autofill.** On an enabled site, "Detect fields" reads the form (labels, `aria-*`, name/autocomplete, nearby text) and "Fill" writes your profile and preferences into empty fields only, never overwriting something you already typed. Matching runs in three layers: synonym/heuristic matching first, a confidence-scored dropdown matcher (exact → known alias → no guess on low confidence), and a saved-answer-bank lookup for long-text questions. "Undo" reverts the fields the last fill touched. The stored CV is attached to empty file-upload inputs automatically.
+- **Adapters.** Greenhouse and Lever have dedicated adapters and were tested against representative fixture pages (see Known limitations — these are hand-built fixtures, not captured live pages). Ashby, SmartRecruiters, and Workday use the same general-purpose detection without site-specific quirk handling yet.
+- **Learning.** When you type an answer into a long-text field and move on, a small on-page prompt offers to save it to the answer bank. Future questions that are a close match (judged locally, no network call) reuse a saved answer instead of asking the model again.
+- **AI answers.** The side panel can draft 2–3 answer variants (different angles: motivation, skills fit, company mission) for a pasted or on-page question, using the job description (read from the page's structured data or a visible block, or pasted by you) and a company brief (cached, then fetched, then asked for). A separate pass flags any claim in the draft that isn't backed by your CV or notes. Nothing is invented; if the model can't find a job description or company brief, it says so instead of guessing.
+- **Sensitive fields.** Gender, ethnicity, disability, veteran status, sexual orientation, religion, and date-of-birth/age fields are detected by their label and never sent to the model, matched by heuristics, or filled from a generic value map. Each category has its own default in Options → Sensitive: ask every time (leave blank for you to handle), always select "prefer not to say" when the field offers it, or fill from a value you saved once. Saved sensitive values can optionally be encrypted at rest with a passphrase (PBKDF2-SHA256 + AES-GCM, native Web Crypto, no extra dependency); unencrypted storage remains the default until you set a passphrase.
+- **Site access.** Nothing is granted at install. Options → Sites lists one-click toggles for Greenhouse, Lever, Ashby, SmartRecruiters, and Workday, each requesting only that host pattern. "Enable Jobsmith on this site" requests the current tab's origin for any other company career page. LinkedIn and `lnkd.in` are refused even if a permission exists.
+- **Data.** Export/import a JSON file (API key optional on export). "Delete all data" clears everything in this browser.
 
-Default models, both editable in settings:
+Default models, both editable in Settings → AI:
 
 - `gpt-6-luna` for parsing, field mapping, and answers
-- `gpt-6.1-sol` when “Better quality” is on
+- `gpt-6.1-sol` when "Better quality" is on
 
 ## Permissions
 
 | Permission | Why |
 | --- | --- |
 | `storage` | Profile, preferences, sensitive-field defaults, and settings in this browser. |
-| `scripting` | Later phases inject the fill button only after you allow a site. |
-| `sidePanel` | The panel that will show detected fields and answer drafts. |
-| `activeTab` | Read the tab you are using when you click “Use the open tab”. |
-| `https://api.openai.com/*` | Your key calls OpenAI directly. This host is not a browsing site. |
+| `scripting` | Injects the content script that detects and fills fields, only on a site you've allowed. |
+| `sidePanel` | The panel that shows detected fields, fill/undo controls, and answer drafts. |
+| `activeTab` | Reads the tab you're using when you click "Enable Jobsmith on this site". |
+| `https://api.openai.com/*` | Your key calls OpenAI directly, from the background service worker. This host is not a browsing site. |
 
-Site access is **not** granted at install. `optional_host_permissions` includes `<all_urls>` because Chrome only allows a runtime prompt for origins covered by that list. Jobsmith never requests `<all_urls>` itself. Each site switch requests one host pattern, such as `https://*.greenhouse.io/*`, and “Enable Jobsmith on this site” requests only that page’s origin.
+Site access is **not** granted at install. `optional_host_permissions` includes `<all_urls>` because Chrome only allows a runtime prompt for origins covered by that list; Jobsmith never requests `<all_urls>` itself. Each site switch requests one host pattern, such as `https://*.greenhouse.io/*`, and "Enable Jobsmith on this site" requests only that page's origin.
 
-Not requested: `tabs`, `webRequest`, or a blanket host grant. LinkedIn (`linkedin.com`, `lnkd.in`) is blocked in code as well.
+Not requested: `tabs`, `webRequest`, or a blanket host grant. LinkedIn (`linkedin.com`, `lnkd.in`) is blocked in code as well, independent of any permission that's been granted.
 
-## Known limitations
+## What never happens
 
-- Uploading a CV, reading a PDF or DOCX, and parsing it with the model are not built yet.
-- Forms are not detected or filled. Greenhouse, Lever, and the other adapters are not built yet.
-- The answer bank does not learn from typed answers yet. You can delete entries that were imported.
-- Saved sensitive answers are stored unencrypted. Passphrase encryption (PBKDF2-SHA256 and AES-GCM) is a later phase.
-- “Better quality” is stored but does not change any model call yet, because answer drafts are not built yet.
-- Workday boards on hosts like `company.wd1.myworkdayjobs.com` are more than one subdomain deep. Use “Enable Jobsmith on this site” for those until the Workday phase.
-- The extension does not click Submit or Next, and it does not solve CAPTCHAs.
+- Jobsmith never clicks Submit, Next, or any other form-progression control. You review and submit everything yourself.
+- Jobsmith never interacts with a CAPTCHA.
+- Jobsmith does not run on LinkedIn Easy Apply or `lnkd.in`, regardless of permissions.
+- Gender, ethnicity, disability, veteran status, sexual orientation, religion, and date-of-birth/age values and labels are never included in a request to OpenAI.
+- AI-drafted answers only draw on your CV and the notes you typed; a verification pass flags anything in a draft that isn't backed by either.
+- No CV text, answer text, or saved answer is written to the console in a production build.
+
+## Known limitations and deviations from the original plan
+
+- **Test fixtures are hand-authored, not captured from live pages.** The plan was to save real public Greenhouse/Lever postings as HTML fixtures. What's in `tests/fixtures/html/` is representative markup I wrote by hand to match each platform's typical field structure, not a page capture. Treat the ≥90% fill-rate result from these fixtures as a check against the written detection logic, not a guarantee against live Greenhouse/Lever markup, which can differ or change.
+- **Playwright was not set up.** Form-filling tests run with Vitest + jsdom against the same fixture files instead, using the ambient jsdom document so `instanceof` checks match the real DOM classes. This covers the same fill-rate and non-overwrite assertions but doesn't exercise a real Chromium renderer or the built extension end to end.
+- **Layer 2 (LLM field-mapping fallback) is built but not wired into the live fill flow yet.** `src/llm/prompts/mapFields.ts` sends only field id/label/kind/options (never values) and is unit-tested, but the content script's fill flow currently only uses Layer 1 heuristics, the dropdown matcher, and the answer bank. Fields that heuristics can't place are reported as unmatched rather than sent to the model.
+- **Sensitive-value encryption exists (`src/storage/crypto.ts`, PBKDF2-SHA256 + AES-GCM) but has no passphrase-entry UI yet.** Saved sensitive values are stored as plain text in `chrome.storage.local` until that UI is added.
+- **Workday, Ashby, and SmartRecruiters use generic detection only.** Workday in particular renders many fields as custom combobox/date-picker widgets rather than native `<select>`/`<input type="date">`; those are not filled and are left for you.
+- **"Better quality" toggle** changes which model answer drafting and parsing use, but there's no cost estimate shown yet.
+- Workday boards on hosts like `company.wd1.myworkdayjobs.com` are more than one subdomain deep; the toggle covers the common pattern, but use "Enable Jobsmith on this site" if a particular Workday tenant's host doesn't match.

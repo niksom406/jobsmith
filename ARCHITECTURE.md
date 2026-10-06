@@ -1,7 +1,6 @@
 # Jobsmith — Architecture Note
 
-This note is the plan for building Jobsmith. Phase 1 (foundation) is implemented. Later phases have not started.
-Per the brief, each phase stops for tests and a summary before the next one begins.
+This note was the plan for building Jobsmith. All seven phases below are now implemented, built straight through at the owner's explicit request (rather than stopping for review after each phase, which is how work started and how §9 originally read). §11 records where the implementation differs from this plan.
 
 ## 1. Toolchain: WXT (not CRXJS)
 
@@ -114,15 +113,15 @@ Manifest requests only `storage`, `scripting`, `sidePanel`, `activeTab`, plus `h
 
 ## 9. Phases (unchanged from brief, restated for sign-off)
 
-1. Foundation — scaffold, schemas + storage layer, options shell, API key settings, export/import.
-2. CV onboarding — upload, extraction, LLM parse, review screen, preferences wizard.
-3. Autofill core — layers 1–2, filling logic, Greenhouse + Lever adapters, fixtures + tests.
-4. Learning — save-answer prompt, answer bank, fuzzy matching, answer bank UI.
-5. AI answers — JD extraction + paste fallback, company brief + cache, ask-then-polish, variants, verification pass, side panel UI.
-6. Sensitive fields + dropdown robustness — defaults, optional encryption, custom dropdowns.
-7. More ATS + hardening — Ashby, SmartRecruiters, Workday, file upload, errors, a11y, README, privacy policy, store checklist.
+1. Foundation — scaffold, schemas + storage layer, options shell, API key settings, export/import. **Done.**
+2. CV onboarding — upload, extraction, LLM parse, review screen, preferences wizard. **Done.**
+3. Autofill core — layers 1–2, filling logic, Greenhouse + Lever adapters, fixtures + tests. **Done, except Layer 2 is not wired into the live fill flow — see §11.**
+4. Learning — save-answer prompt, answer bank, fuzzy matching, answer bank UI. **Done.**
+5. AI answers — JD extraction + paste fallback, company brief + cache, ask-then-polish, variants, verification pass, side panel UI. **Done.**
+6. Sensitive fields + dropdown robustness — defaults, optional encryption, custom dropdowns. **Defaults and encryption done; custom dropdown handling (beyond native `<select>`) not done — see §11.**
+7. More ATS + hardening — Ashby, SmartRecruiters, Workday, file upload, errors, a11y, README, privacy policy, store checklist. **Adapters registered and file-upload attach done; privacy policy draft and store checklist not done.**
 
-I'll stop after each phase for review and tests before moving on.
+Phases 2–7 were built in one continuous pass rather than stopping after each one, at the owner's explicit instruction given after Phase 1 shipped. See §11 for every place the result differs from what was planned here.
 
 ## 10. Decisions
 
@@ -134,3 +133,13 @@ I'll stop after each phase for review and tests before moving on.
 4. **Answer-bank matching is local-only in Phase 4.** Normalize the question text, then score it with a lightweight string-similarity algorithm. No network call and no OpenAI embeddings on the default path. Embeddings can be added later as an opt-in under the "better quality" setting.
 5. **Test fixtures come from public postings.** In Phase 3, capture a couple of real public Greenhouse and Lever application pages as static HTML (view-only, no form submission). Playwright runs against those saved files, not the live sites.
 6. **Default models.** `gpt-6-luna` for parsing, field mapping, and answers. `gpt-6.1-sol` when "better quality" is on. Both are editable in AI settings. See §6.
+
+## 11. Where the build differs from this note
+
+Phases 2–7 were built in one continuous pass at the owner's request, rather than stopping for review after each one. Two decisions above (§10.5 and the Playwright line in §8) were not followed as written, and two features were built but not fully wired up. All are tracked here rather than silently left out of this note:
+
+- **§10.5 / §8, test fixtures and Playwright.** The fixtures under `tests/fixtures/html/{greenhouse,lever}/` are hand-authored markup representative of each platform's typical field structure, not captured from a live posting. Playwright was never added as a dependency; `src/autofill/fillFixtures.test.ts` runs the same ≥90% fill-rate and non-overwrite assertions with Vitest + jsdom against those fixtures instead, loading the fixture HTML into the ambient jsdom `document` (not a separate `JSDOM` instance) so `instanceof HTMLInputElement`-style checks in `detect.ts` see the same realm. This is a real gap against the plan: no test here exercises a real browser or the built extension end to end, and the fixtures may not reflect how live Greenhouse/Lever pages are actually marked up today.
+- **Layer 2 (LLM field-mapping fallback), `src/llm/prompts/mapFields.ts`.** Implemented and unit-tested — it sends only `{id, label, kind, options}` per unmatched field, never a value — but not called from the content script's fill flow. Today, fields heuristics can't place are reported to the side panel as unmatched rather than escalated to the model. Wiring this in is the main remaining gap in the autofill engine.
+- **Sensitive-value encryption, `src/storage/crypto.ts`.** PBKDF2-SHA256 (600,000 iterations) + AES-GCM via native Web Crypto, as decided in §10.1, implemented and unit-tested (round-trip, wrong-passphrase rejection, ciphertext never contains the plaintext). There is no passphrase-entry UI in Options yet, so saved sensitive values stay in plain text in `chrome.storage.local` until that UI exists and calls these functions.
+- **Workday/Ashby/SmartRecruiters adapters.** All three register in `src/autofill/adapters/registry.ts` by hostname but, unlike Greenhouse/Lever, have no quirk-handling body yet — they fall through to the generic adapter. Workday in particular needs custom-dropdown and date-picker handling (tracked in §9 phase 6 as "custom dropdowns," not completed) because it renders many fields as JS widgets rather than native form controls.
+- **Sensitive-field guarantee.** The "never sent to the LLM" requirement for gender/ethnicity/disability/veteran/sexual-orientation/religion/date-of-birth is enforced two ways: `src/autofill/sensitiveFields.ts` detects these categories by label/option text and the content script excludes them from the heuristic value-fill path entirely (`src/autofill/applySensitiveDefaults.ts`), and because Layer 2 isn't wired in yet (previous bullet), no field — sensitive or not — currently reaches an LLM call during filling. `src/autofill/sensitiveNeverSent.test.ts` asserts no `fetch` happens while a sensitive field is processed, and that the Layer-2 payload shape never carries a selected value.
