@@ -1,0 +1,44 @@
+import { afterEach, expect, test } from "vitest";
+import { db } from "../storage/db";
+import { getCompanyBrief, saveUserProvidedBrief } from "./companyBrief";
+
+afterEach(async () => {
+  await db.companyCache.clear();
+});
+
+test("returns a cached brief without any network call", async () => {
+  await saveUserProvidedBrief("acme.example", "Acme makes gadgets.");
+  let called = false;
+  const fetchImpl: typeof fetch = async () => {
+    called = true;
+    return new Response("", { status: 200 });
+  };
+  const result = await getCompanyBrief({ domain: "acme.example", apiKey: "sk-test", model: "gpt-6-luna", fetchImpl });
+  expect(result).toEqual({ brief: "Acme makes gadgets.", source: "cache" });
+  expect(called).toBe(false);
+});
+
+test("falls back to the About page when the model has no answer, and caches it", async () => {
+  const fetchImpl: typeof fetch = async (input) => {
+    const url = String(input);
+    if (url.includes("api.openai.com")) {
+      return new Response(JSON.stringify({ output_text: JSON.stringify({ brief: "I cannot find reliable information." }) }), { status: 200 });
+    }
+    if (url.endsWith("/about")) {
+      return new Response(`<html><body><main>${"Acme builds tools for careers teams. ".repeat(10)}</main></body></html>`, { status: 200 });
+    }
+    return new Response("", { status: 404 });
+  };
+  const result = await getCompanyBrief({ domain: "acme.example", apiKey: "sk-test", model: "gpt-6-luna", fetchImpl });
+  expect(result.source).toBe("about_page");
+  expect(result.brief).toContain("Acme builds tools");
+
+  const cached = await db.companyCache.get("acme.example");
+  expect(cached?.source).toBe("about_page");
+});
+
+test("reports none when every source fails, instead of guessing", async () => {
+  const fetchImpl: typeof fetch = async () => new Response("", { status: 500 });
+  const result = await getCompanyBrief({ domain: "unknown.example", apiKey: "sk-test", model: "gpt-6-luna", fetchImpl });
+  expect(result).toEqual({ brief: "", source: "none" });
+});
