@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ZodError } from "zod";
 import { answerBankSchema, type AnswerBankEntry } from "../../src/schemas/answerBank";
-import type { DocumentMeta } from "../../src/schemas/documents";
+import type { DocumentRecord } from "../../src/schemas/documents";
 import {
   sensitiveCategoryIds,
   sensitiveCategoryLabels,
@@ -15,44 +15,109 @@ import { decryptWithPassphrase, encryptWithPassphrase, type EncryptedValue } fro
 import { deleteAllData, dumpRaw, exportAll, importAll } from "../../src/storage/transfer";
 import { activeArea } from "../../src/storage/localStore";
 import { clearSessionPassphrase, getSessionPassphrase, setSessionPassphrase } from "../../src/storage/sessionPassphrase";
-import { downloadJson } from "../../src/ui/download";
+import { downloadBlob, downloadJson } from "../../src/ui/download";
 import { EnableSiteForm } from "../../src/ui/EnableSiteForm";
 import { testConnectionRequestSchema, testConnectionResultSchema } from "../../src/messaging/types";
 import { Button, Card, SaveRow, SelectField, TextField } from "./fields";
 
+/** True for file types a browser tab can render directly from a blob: URL. */
+function isViewableInline(mimeType: string): boolean {
+  return mimeType === "application/pdf";
+}
+
+function DocumentRow({ row, onDeleted }: { row: DocumentRecord; onDeleted: () => void }) {
+  const [showFullText, setShowFullText] = useState(false);
+  const [viewUrl, setViewUrl] = useState<string | null>(null);
+
+  // Revoke the blob: URL when the row unmounts or a new one is opened, so it doesn't leak.
+  useEffect(() => {
+    return () => {
+      if (viewUrl) URL.revokeObjectURL(viewUrl);
+    };
+  }, [viewUrl]);
+
+  function handleView() {
+    if (viewUrl) {
+      window.open(viewUrl, "_blank", "noopener,noreferrer");
+      return;
+    }
+    const url = URL.createObjectURL(row.blob);
+    setViewUrl(url);
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  function handleDownload() {
+    downloadBlob(row.fileName || "document", row.blob);
+  }
+
+  async function handleDelete() {
+    if (!window.confirm(`Delete ${row.fileName || "this document"}? This can't be undone.`)) return;
+    await db.documents.delete(row.id);
+    onDeleted();
+  }
+
+  return (
+    <Card>
+      <h3 className="font-serif text-xl">{row.fileName || "Untitled file"}</h3>
+      <p className="text-sm text-muted">
+        {row.kind === "cv" ? "CV" : "Cover letter"} · {row.mimeType} · saved {new Date(row.createdAt).toLocaleString()}
+      </p>
+      <div className="flex gap-2">
+        {isViewableInline(row.mimeType) ? (
+          <Button tone="quiet" onClick={handleView}>
+            View
+          </Button>
+        ) : null}
+        <Button tone="quiet" onClick={handleDownload}>
+          Download original file
+        </Button>
+        <Button tone="danger" onClick={handleDelete}>
+          Delete
+        </Button>
+      </div>
+      {row.parsedText ? (
+        <div>
+          <p className={showFullText ? "text-sm whitespace-pre-wrap" : "line-clamp-4 text-sm whitespace-pre-wrap"}>
+            {row.parsedText}
+          </p>
+          <button type="button" className="mt-1 text-sm text-moss-dark underline" onClick={() => setShowFullText((value) => !value)}>
+            {showFullText ? "Show less" : "Show full extracted text"}
+          </button>
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
 export function DocumentsSection() {
-  const [rows, setRows] = useState<DocumentMeta[] | null>(null);
+  const [rows, setRows] = useState<DocumentRecord[] | null>(null);
+
+  async function reload() {
+    setRows(await db.documents.toArray());
+  }
 
   useEffect(() => {
-    void db.documents.toArray().then((documents) => {
-      setRows(
-        documents.map((document) => ({
-          id: document.id,
-          schemaVersion: document.schemaVersion,
-          kind: document.kind,
-          fileName: document.fileName,
-          mimeType: document.mimeType,
-          parsedText: document.parsedText,
-          createdAt: document.createdAt,
-        })),
-      );
-    });
+    void reload();
   }, []);
 
   return (
     <div className="space-y-4">
       <header>
         <h2 className="font-serif text-3xl">Documents</h2>
-        <p className="mt-1 text-sm text-muted">CV upload arrives in the next phase. Files already stored in this browser are listed here.</p>
+        <p className="mt-1 text-sm text-muted">
+          Files stored in this browser. View or download the exact file you uploaded, or delete it.
+        </p>
       </header>
       {rows === null ? <p className="text-sm text-muted">Loading…</p> : null}
-      {rows?.length === 0 ? <Card><p className="text-sm text-muted">No documents yet.</p></Card> : null}
-      {rows?.map((row) => (
-        <Card key={row.id}>
-          <h3 className="font-serif text-xl">{row.fileName || "Untitled file"}</h3>
-          <p className="text-sm text-muted">{row.kind === "cv" ? "CV" : "Cover letter"} · {row.mimeType}</p>
-          {row.parsedText ? <p className="line-clamp-4 text-sm whitespace-pre-wrap">{row.parsedText}</p> : null}
+      {rows?.length === 0 ? (
+        <Card>
+          <p className="text-sm text-muted">
+            No documents yet. Upload a CV from the "Upload CV" tab — it's stored here once you finish the review step.
+          </p>
         </Card>
+      ) : null}
+      {rows?.map((row) => (
+        <DocumentRow key={row.id} row={row} onDeleted={reload} />
       ))}
     </div>
   );
