@@ -52,7 +52,12 @@ export async function handleDraftAnswersRequest(payload: DraftAnswersRequest["pa
     companyBriefSource = brief.source;
   }
   if (!companyBrief && !payload.userNotes.trim()) {
-    return { ok: false, error: "Jobsmith could not find a company brief.", needsCompanyBrief: true, needsJobDescription: false };
+    return {
+      ok: false,
+      error: "Jobsmith searched the web but could not find a reliable company brief for this domain.",
+      needsCompanyBrief: true,
+      needsJobDescription: false,
+    };
   }
 
   const variants = await draftAnswerVariants({

@@ -57,6 +57,29 @@ test("retries once on a schema mismatch, then succeeds", async () => {
   expect(result.data.greeting).toBe("hi");
 });
 
+test("includes tools in the request body when provided, and omits them otherwise", async () => {
+  const captured: { body: unknown } = { body: null };
+  const fetchImpl: typeof fetch = async (_input, init) => {
+    captured.body = JSON.parse(String(init?.body));
+    return responseWith(JSON.stringify({ greeting: "hi" }));
+  };
+  await callLlmJson({
+    apiKey: "sk-test",
+    model: "gpt-6-luna",
+    system: "s",
+    user: "u",
+    schema,
+    schemaName: "greeting",
+    fetchImpl,
+    tools: [{ type: "web_search" }],
+  });
+  expect((captured.body as { tools?: unknown[] })?.tools).toEqual([{ type: "web_search" }]);
+
+  captured.body = null;
+  await callLlmJson({ apiKey: "sk-test", model: "gpt-6-luna", system: "s", user: "u", schema, schemaName: "greeting", fetchImpl });
+  expect(captured.body && "tools" in (captured.body as object)).toBe(false);
+});
+
 test("surfaces a rejected key without retrying", async () => {
   let call = 0;
   const fetchImpl: typeof fetch = async () => {

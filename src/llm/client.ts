@@ -18,6 +18,14 @@ export interface LlmCallOptions<T> {
   timeoutMs?: number;
   retries?: number;
   fetchImpl?: typeof fetch;
+  /**
+   * OpenAI's hosted Responses API tools (e.g. `[{ type: "web_search" }]`) run server-side on
+   * OpenAI's own infrastructure — Jobsmith never fetches arbitrary sites itself, so this needs no
+   * extra host permission beyond https://api.openai.com. Not every model supports every tool; a
+   * request with an unsupported tool fails like any other OpenAI error and the caller decides
+   * whether to retry without it.
+   */
+  tools?: Record<string, unknown>[];
 }
 
 export interface LlmCallResult<T> {
@@ -37,7 +45,7 @@ function zodToJsonSchema(schema: ZodType<unknown>): Record<string, unknown> {
  * retries once on a schema mismatch or transient failure, and never logs prompt or answer text.
  */
 export async function callLlmJson<T>(options: LlmCallOptions<T>): Promise<LlmCallResult<T>> {
-  const { apiKey, model, system, user, schema, schemaName, maxOutputTokens = 2000, timeoutMs = 30_000 } = options;
+  const { apiKey, model, system, user, schema, schemaName, maxOutputTokens = 2000, timeoutMs = 30_000, tools } = options;
   const retries = options.retries ?? 1;
   const fetchImpl = options.fetchImpl ?? fetch;
 
@@ -69,6 +77,7 @@ export async function callLlmJson<T>(options: LlmCallOptions<T>): Promise<LlmCal
             { role: "system", content: system },
             { role: "user", content: user + correction },
           ],
+          ...(tools && tools.length > 0 ? { tools } : {}),
           text: {
             format: {
               type: "json_schema",

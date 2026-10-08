@@ -49,20 +49,25 @@ export async function getCompanyBrief(options: {
       apiKey: options.apiKey,
       model: options.model,
       system:
-        "Write a short, factual, three-sentence brief about the company at the given domain: what it does, who it serves, " +
-        "and one notable fact. If you are not confident, say so plainly instead of guessing.",
+        "Use the web_search tool to look up the company at the given domain before answering. Search for its own site, " +
+        "news, or a reputable profile (e.g. Crunchbase, LinkedIn) — do not rely on what you already know, since that can be " +
+        "outdated or wrong. Then write a short, factual, three-sentence brief: what the company does, who it serves, and " +
+        "one notable fact from what you found. If the search turns up nothing reliable about this specific company, say so " +
+        "plainly instead of guessing.",
       user: `Company domain: ${options.domain}`,
       schema: briefSchema,
       schemaName: "company_brief",
       fetchImpl,
-      maxOutputTokens: 400,
+      maxOutputTokens: 800,
+      tools: [{ type: "web_search" }],
     });
-    if (result.data.brief && !/not confident|cannot find|unable to/i.test(result.data.brief)) {
+    if (result.data.brief && !/not confident|cannot find|unable to|nothing reliable/i.test(result.data.brief)) {
       await db.companyCache.put({ schemaVersion: 1, domain: options.domain, brief: result.data.brief, source: "web_search", fetchedAt: new Date().toISOString() });
       return { brief: result.data.brief, source: "web_search" };
     }
   } catch {
-    // Fall through to the About page.
+    // Some models don't support the web_search tool, or the request failed outright either way.
+    // Fall through to the About page fetch, which doesn't need it.
   }
 
   const aboutText = await fetchAboutPageText(options.domain, fetchImpl);

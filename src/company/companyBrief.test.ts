@@ -37,6 +37,19 @@ test("falls back to the About page when the model has no answer, and caches it",
   expect(cached?.source).toBe("about_page");
 });
 
+test("asks OpenAI to actually search the web, not just recall from memory", async () => {
+  const captured: { body: unknown } = { body: null };
+  const fetchImpl: typeof fetch = async (_input, init) => {
+    captured.body = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({ output_text: JSON.stringify({ brief: "Acme is a logistics company serving small retailers. Found via web_search." }) }), {
+      status: 200,
+    });
+  };
+  const result = await getCompanyBrief({ domain: "acme.example", apiKey: "sk-test", model: "gpt-6-luna", fetchImpl });
+  expect(result.source).toBe("web_search");
+  expect((captured.body as { tools?: unknown[] })?.tools).toEqual([{ type: "web_search" }]);
+});
+
 test("reports none when every source fails, instead of guessing", async () => {
   const fetchImpl: typeof fetch = async () => new Response("", { status: 500 });
   const result = await getCompanyBrief({ domain: "unknown.example", apiKey: "sk-test", model: "gpt-6-luna", fetchImpl });
