@@ -4,6 +4,7 @@ import { useActiveTabMessage } from "../../src/ui/useActiveTabMessaging";
 import { EnableSiteForm } from "../../src/ui/EnableSiteForm";
 import { FieldList } from "./FieldList";
 import { AnswerDraftPanel } from "./AnswerDraftPanel";
+import { ThemeToggle } from "../../src/ui/ThemeToggle";
 
 export default function App() {
   const sendToTab = useActiveTabMessage();
@@ -34,7 +35,12 @@ export default function App() {
     await detect();
   }
 
-  const filledCount = status?.fields.filter((field) => field.status === "filled").length ?? 0;
+  async function replace(fieldId: string) {
+    const result = await sendToTab<{ ok: boolean; error?: string }>({ type: "replace-field-answer", payload: { fieldId } });
+    if (!result?.ok) setError(result?.error ?? "Could not draft a different answer.");
+  }
+
+  const filledCount = status?.fields.filter((field) => field.status === "filled" || field.status === "filled_ai_draft").length ?? 0;
 
   return (
     <main className="space-y-6 p-4">
@@ -43,18 +49,21 @@ export default function App() {
           <p className="text-xs tracking-wide text-muted uppercase">Jobsmith</p>
           <h1 className="font-serif text-2xl">This page</h1>
         </div>
-        <button
-          type="button"
-          aria-label="Open settings"
-          title="Settings"
-          onClick={() => chrome.runtime.openOptionsPage()}
-          className="rounded-md border border-line bg-card p-2 text-muted hover:text-ink"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-          </svg>
-        </button>
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
+          <button
+            type="button"
+            aria-label="Open settings"
+            title="Settings"
+            onClick={() => chrome.runtime.openOptionsPage()}
+            className="rounded-md border border-line bg-card p-2 text-muted hover:text-ink"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
+        </div>
       </header>
 
       {status?.blocked ? (
@@ -81,7 +90,7 @@ export default function App() {
                 {filledCount} of {status.totalFields} fields filled. Review everything before you submit — Jobsmith never
                 clicks Submit or Next for you.
               </p>
-              <FieldList fields={status.fields} />
+              <FieldList fields={status.fields} onReplace={replace} />
             </>
           ) : null}
         </div>

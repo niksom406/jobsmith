@@ -18,6 +18,7 @@ import {
   SensitiveSection,
   SitesSection,
 } from "./OtherSections";
+import { ThemeToggle } from "./fields";
 
 const NAV = [
   ["cv", "Upload CV"],
@@ -71,8 +72,13 @@ export default function App() {
   return (
     <div className="mx-auto grid min-h-screen max-w-6xl gap-8 px-6 py-8 md:grid-cols-[220px_1fr]">
       <aside>
-        <p className="font-serif text-2xl">Jobsmith</p>
-        <p className="mt-1 text-sm text-muted">Settings stay in this browser.</p>
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <p className="font-serif text-2xl">Jobsmith</p>
+            <p className="mt-1 text-sm text-muted">Settings stay in this browser.</p>
+          </div>
+          <ThemeToggle />
+        </div>
         <nav className="mt-6 flex flex-col gap-1" aria-label="Settings sections">
           {NAV.map(([id, label]) => (
             <button

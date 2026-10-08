@@ -1,5 +1,7 @@
 import { useId, type ReactNode } from "react";
 
+export { ThemeToggle } from "../../src/ui/ThemeToggle";
+
 const controlClass = "w-full rounded-md border border-line bg-card px-3 py-2 text-ink outline-none ring-moss focus:ring-2";
 
 export function TextField({

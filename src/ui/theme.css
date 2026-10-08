@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Lets "dark:" utilities respond to a manually-toggled .dark class (on <html>) instead of only
+   the OS-level prefers-color-scheme, so the in-app theme toggle actually controls the look. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: "Avenir Next", "Segoe UI", sans-serif;
   --font-serif: "Iowan Old Style", Palatino, Georgia, serif;
@@ -13,12 +17,26 @@
   --color-muted: #6b645b;
 }
 
+/* Same tokens, re-pointed at dark values. Everything built on bg-paper/text-ink/etc already
+   picks these up automatically -- no per-component dark: classes needed for the base palette. */
+.dark {
+  --color-paper: #15130f;
+  --color-ink: #ece7da;
+  --color-card: #211e18;
+  --color-line: #3a3528;
+  --color-moss: #4caf7d;
+  --color-moss-dark: #7bd4a6;
+  --color-clay: #e08a73;
+  --color-muted: #a39b8c;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
   background: var(--color-paper);
   color: var(--color-ink);
   font-family: var(--font-sans);
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 button,

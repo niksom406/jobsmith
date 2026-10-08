@@ -25,6 +25,13 @@ import { chromeLocalArea, LOCAL_KEYS } from "../../src/storage/localStore";
 import { fillAriaComboboxes, fillWorkdayDateGroups, type WidgetOutcome } from "../../src/autofill/workdayWidgets";
 import type { DetectedField, FieldMatch, ProfileValueMap } from "../../src/autofill/types";
 import type { FillOutcome, UndoEntry as UndoEntryType } from "../../src/autofill/fill";
+import { extractJobDescription } from "../../src/jd/extractJobDescription";
+import {
+  draftFieldAnswerRequestSchema,
+  draftFieldAnswerResultSchema,
+  replaceFieldAnswerRequestSchema,
+  replaceFieldAnswerResultSchema,
+} from "../../src/messaging/draftFieldTypes";
 import { defineContentScript } from "wxt/utils/define-content-script";
 
 export default defineContentScript({
@@ -32,6 +39,17 @@ export default defineContentScript({
   main() {
     let lastUndo: UndoEntry[] = [];
     const promptedFields = new WeakSet<HTMLElement>();
+
+    interface AiDraftEntry {
+      element: HTMLInputElement | HTMLTextAreaElement;
+      question: string;
+      variants: { angle: string; text: string }[];
+      usedIndex: number;
+    }
+    // Fresh on every "Fill" (see run-fill below) — tracks fields Jobsmith auto-drafted so the side
+    // panel's "Replace" button can swap in another variant, or ask for a fresh one, without
+    // re-detecting the whole page.
+    let aiDraftState = new Map<string, AiDraftEntry>();
 
     function labelForElement(element: HTMLElement): string {
       const id = element.getAttribute("id");
@@ -203,6 +221,63 @@ export default defineContentScript({
       return { outcomes, undo, stillUnmatched };
     }
 
+    /**
+     * Last resort for long-text questions nothing else could match: drafts an answer from the CV,
+     * notes, and this page's job description, the same way the "Draft an answer" panel does — but
+     * automatically, for every remaining long-text field at once. Only runs if a job description
+     * was actually found on the page; a question could not be answered well without one, so this is
+     * the one case where Jobsmith stops rather than filling something in. Never invents facts: it's
+     * the exact same draftAnswerVariants() call, same system prompt, same "use only the CV/notes"
+     * rule as the manual panel.
+     */
+    async function fillFromAiDraft(
+      unmatched: DetectedField[],
+    ): Promise<{ outcomes: { fieldId: string; status: "filled_ai_draft" }[]; undo: UndoEntryType[]; stillUnmatched: DetectedField[] }> {
+      const outcomes: { fieldId: string; status: "filled_ai_draft" }[] = [];
+      const undo: UndoEntryType[] = [];
+      const stillUnmatched: DetectedField[] = [];
+
+      const longTextFields = unmatched.filter(
+        (field) => field.kind === "textarea" || (field.kind === "text" && isLongTextField(field.element)),
+      );
+      for (const field of unmatched) {
+        if (!longTextFields.includes(field)) stillUnmatched.push(field);
+      }
+      if (longTextFields.length === 0) return { outcomes, undo, stillUnmatched };
+
+      const jd = extractJobDescription(document);
+      if (jd.source === "none") {
+        stillUnmatched.push(...longTextFields);
+        return { outcomes, undo, stillUnmatched };
+      }
+
+      for (const field of longTextFields) {
+        const element = field.element as HTMLInputElement | HTMLTextAreaElement;
+        try {
+          const response = await chrome.runtime.sendMessage(
+            draftFieldAnswerRequestSchema.parse({
+              type: "draft-field-answer",
+              payload: { question: field.label, jobDescription: jd.text, companyDomain: window.location.hostname, avoidTexts: [] },
+            }),
+          );
+          const parsed = draftFieldAnswerResultSchema.safeParse(response);
+          const text = parsed.success && parsed.data.ok ? parsed.data.variants[0]?.text : undefined;
+          if (!parsed.success || !parsed.data.ok || !text) {
+            stillUnmatched.push(field);
+            continue;
+          }
+          undo.push({ element, kind: "text", previousValue: element.value });
+          setTextValue(element, text);
+          outcomes.push({ fieldId: field.id, status: "filled_ai_draft" });
+          aiDraftState.set(field.id, { element, question: field.label, variants: parsed.data.variants, usedIndex: 0 });
+        } catch {
+          stillUnmatched.push(field);
+        }
+      }
+
+      return { outcomes, undo, stillUnmatched };
+    }
+
     async function loadProfileAndPreferences() {
       const stored = await chromeLocalArea.get([LOCAL_KEYS.profile, LOCAL_KEYS.preferences, LOCAL_KEYS.sensitiveDefaults]);
       const profile = profileSchema.safeParse(stored[LOCAL_KEYS.profile]);
@@ -258,6 +333,7 @@ export default defineContentScript({
             return;
           }
           adapterForHostname(window.location.hostname);
+          aiDraftState = new Map();
           const fields = detectFields(document);
           const { profile, preferences, sensitiveDefaults } = await loadProfileAndPreferences();
           const decryptedSensitiveDefaults = await decryptSensitiveDefaultsForFill(sensitiveDefaults);
@@ -275,6 +351,7 @@ export default defineContentScript({
           const fromMapping = await fillFromLlmMapping(fromBank.stillUnmatched, values);
 
           const fileOutcomes = await attachStoredCvToFileInputs(fields);
+          const fromAiDraft = await fillFromAiDraft(fromMapping.stillUnmatched);
 
           // Workday (and anything else using the same ARIA pattern) renders most pickers as custom
           // widgets rather than native <select>/<input type="date">, so they never show up in `fields`
@@ -284,8 +361,8 @@ export default defineContentScript({
               ? [...(await fillAriaComboboxes(document, values)), ...fillWorkdayDateGroups(document, values)]
               : [];
 
-          lastUndo = [...undo, ...fromBank.undo, ...fromMapping.undo, ...sensitiveResult.undo];
-          const allOutcomes = [...outcomes, ...fromBank.outcomes, ...fromMapping.outcomes, ...sensitiveResult.outcomes, ...fileOutcomes];
+          lastUndo = [...undo, ...fromBank.undo, ...fromMapping.undo, ...sensitiveResult.undo, ...fromAiDraft.undo];
+          const allOutcomes = [...outcomes, ...fromBank.outcomes, ...fromMapping.outcomes, ...sensitiveResult.outcomes, ...fileOutcomes, ...fromAiDraft.outcomes];
 
           const byId = new Map(fields.map((field) => [field.id, field]));
           const summaries: FieldSummary[] = allOutcomes.map((outcome) => ({
@@ -294,7 +371,7 @@ export default defineContentScript({
             kind: byId.get(outcome.fieldId)?.kind ?? "text",
             status: outcome.status,
           }));
-          for (const field of fromMapping.stillUnmatched) {
+          for (const field of fromAiDraft.stillUnmatched) {
             summaries.push({ id: field.id, label: field.label, kind: field.kind, status: "unmatched" });
           }
           widgetOutcomes.forEach((widget, index) => {
@@ -315,6 +392,59 @@ export default defineContentScript({
         undoFill(lastUndo);
         lastUndo = [];
         sendResponse({ ok: true });
+        return true;
+      }
+      if (message?.type === "replace-field-answer") {
+        void (async () => {
+          const parsedRequest = replaceFieldAnswerRequestSchema.safeParse(message);
+          if (!parsedRequest.success) {
+            sendResponse({ ok: false, error: "Invalid request." });
+            return;
+          }
+          const fieldId = parsedRequest.data.payload.fieldId;
+          const entry = aiDraftState.get(fieldId);
+          if (!entry) {
+            sendResponse({ ok: false, error: "This field was not auto-drafted by Jobsmith." });
+            return;
+          }
+
+          // Cycle through variants already drafted (motivation/skills-fit/company-mission) before
+          // spending another request on a brand-new set.
+          const nextIndex = entry.usedIndex + 1;
+          if (nextIndex < entry.variants.length) {
+            const text = entry.variants[nextIndex]?.text ?? "";
+            setTextValue(entry.element, text);
+            aiDraftState.set(fieldId, { ...entry, usedIndex: nextIndex });
+            sendResponse(replaceFieldAnswerResultSchema.parse({ ok: true }));
+            return;
+          }
+
+          const jd = extractJobDescription(document);
+          try {
+            const response = await chrome.runtime.sendMessage(
+              draftFieldAnswerRequestSchema.parse({
+                type: "draft-field-answer",
+                payload: {
+                  question: entry.question,
+                  jobDescription: jd.text,
+                  companyDomain: window.location.hostname,
+                  avoidTexts: entry.variants.map((variant) => variant.text),
+                },
+              }),
+            );
+            const parsed = draftFieldAnswerResultSchema.safeParse(response);
+            const text = parsed.success && parsed.data.ok ? parsed.data.variants[0]?.text : undefined;
+            if (!parsed.success || !parsed.data.ok || !text) {
+              sendResponse(replaceFieldAnswerResultSchema.parse({ ok: false, error: "Could not draft a different answer." }));
+              return;
+            }
+            setTextValue(entry.element, text);
+            aiDraftState.set(fieldId, { ...entry, variants: [...entry.variants, ...parsed.data.variants], usedIndex: entry.variants.length });
+            sendResponse(replaceFieldAnswerResultSchema.parse({ ok: true }));
+          } catch {
+            sendResponse(replaceFieldAnswerResultSchema.parse({ ok: false, error: "Could not reach the extension background." }));
+          }
+        })();
         return true;
       }
       if (message?.type === "get-job-description") {

@@ -15,7 +15,9 @@ summary, the user's own notes, the job description, and the company brief. Never
 present in those sources. Include at least one specific detail from the job description and one from the company
 brief. Do not use cliche openers such as "I am excited to apply", "leverage my skills", or "passionate about". Be
 plain and specific. Respect the character limit given, if any. Write 2 to 3 short variants with different angles:
-motivation, skills fit, and company mission.`;
+motivation, skills fit, and company mission. If previousAnswersToAvoidRepeating is non-empty, write something
+noticeably different in wording and angle from every one of those — the user asked to replace them, not see the
+same answer again.`;
 
 export interface DraftAnswerInput {
   apiKey: string;
@@ -26,6 +28,9 @@ export interface DraftAnswerInput {
   jobDescription: string;
   companyBrief: string;
   characterLimit?: number;
+  /** Earlier drafts for this same question (e.g. from a "Replace" click) that the model should
+   * write something meaningfully different from, rather than a near-duplicate. */
+  avoidTexts?: string[];
   fetchImpl?: typeof fetch;
 }
 
@@ -37,6 +42,7 @@ export async function draftAnswerVariants(input: DraftAnswerInput) {
     jobDescription: input.jobDescription,
     companyBrief: input.companyBrief,
     characterLimit: input.characterLimit ?? null,
+    previousAnswersToAvoidRepeating: input.avoidTexts ?? [],
   });
   const result = await callLlmJson({
     apiKey: input.apiKey,

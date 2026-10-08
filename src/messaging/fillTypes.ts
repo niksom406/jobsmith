@@ -6,6 +6,7 @@ export const fieldSummarySchema = z.strictObject({
   kind: z.string(),
   status: z.enum([
     "filled",
+    "filled_ai_draft",
     "skipped_not_empty",
     "skipped_no_value",
     "skipped_low_confidence",

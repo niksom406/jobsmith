@@ -7,10 +7,14 @@ import { getCvFileRequestSchema } from "../src/messaging/documentTypes";
 import { blobToBase64 } from "../src/storage/bytes";
 import { mapFieldsRequestSchema } from "../src/messaging/mapFieldsTypes";
 import { testConnectionRequestSchema, testConnectionResultSchema } from "../src/messaging/types";
+import { draftFieldAnswerRequestSchema } from "../src/messaging/draftFieldTypes";
 import { createDefaultSettings, settingsSchema } from "../src/schemas/settings";
+import { createEmptyProfile, profileSchema } from "../src/schemas/profile";
 import { chromeLocalArea, LOCAL_KEYS } from "../src/storage/localStore";
 import { db } from "../src/storage/db";
 import { handleDraftAnswersRequest } from "../src/llm/prompts/handleDraftAnswers";
+import { draftAnswerVariants } from "../src/llm/prompts/draftAnswer";
+import { getCompanyBrief } from "../src/company/companyBrief";
 import { defineBackground } from "wxt/utils/define-background";
 
 export default defineBackground(() => {
@@ -92,6 +96,52 @@ export default defineBackground(() => {
     const draftAnswers = draftAnswersRequestSchema.safeParse(message);
     if (draftAnswers.success) {
       void handleDraftAnswersRequest(draftAnswers.data.payload).then(sendResponse);
+      return true;
+    }
+
+    const draftFieldAnswer = draftFieldAnswerRequestSchema.safeParse(message);
+    if (draftFieldAnswer.success) {
+      void (async () => {
+        const { question, jobDescription, companyDomain, avoidTexts } = draftFieldAnswer.data.payload;
+        const stored = await chromeLocalArea.get([LOCAL_KEYS.settings, LOCAL_KEYS.profile]);
+        const settingsParsed = settingsSchema.safeParse(stored[LOCAL_KEYS.settings]);
+        const profileParsed = profileSchema.safeParse(stored[LOCAL_KEYS.profile]);
+        const settings = settingsParsed.success ? settingsParsed.data : createDefaultSettings();
+        const profile = profileParsed.success ? profileParsed.data : createEmptyProfile();
+
+        if (!settings.apiKey) {
+          sendResponse({ ok: false, error: "No OpenAI API key is set." });
+          return;
+        }
+
+        let companyBrief = "";
+        if (companyDomain) {
+          try {
+            const brief = await getCompanyBrief({ domain: companyDomain, apiKey: settings.apiKey, model: settings.models.parse });
+            companyBrief = brief.brief;
+          } catch {
+            // A missing company brief does not block an auto-drafted answer — the job description
+            // (already required to get here) and the CV are enough to write something useful.
+          }
+        }
+
+        try {
+          const model = settings.betterQuality ? settings.models.answerBetter : settings.models.answer;
+          const variants = await draftAnswerVariants({
+            apiKey: settings.apiKey,
+            model,
+            question,
+            cvSummary: profile.summary || profile.skills.join(", "),
+            userNotes: "",
+            jobDescription,
+            companyBrief,
+            avoidTexts,
+          });
+          sendResponse({ ok: true, variants });
+        } catch (error) {
+          sendResponse({ ok: false, error: error instanceof Error ? error.message : "Could not draft an answer for this field." });
+        }
+      })();
       return true;
     }
 
