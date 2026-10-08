@@ -35,6 +35,27 @@ function normalize(value: string): string {
 }
 
 /**
+ * Finds the alias-fallback match across every profile key, preferring the longest matching synonym
+ * rather than whichever profile key happens to be declared first in SYNONYMS. Without this, a field
+ * labeled "Address Line 2" would resolve to address.line1 (whose own synonym is the bare word
+ * "address", a substring of "address line 2") before address.line2's own, more specific synonym
+ * ("address line 2") ever gets a chance -- the longest/most-specific match is the correct one.
+ */
+function bestAliasMatch(haystacks: string[], entries: [string, string[]][]): string | null {
+  let best: { profileKey: string; length: number } | null = null;
+  for (const [profileKey, synonyms] of entries) {
+    for (const synonym of synonyms) {
+      const normalizedSynonym = normalize(synonym);
+      if (!normalizedSynonym) continue;
+      if (haystacks.some((haystack) => haystack.includes(normalizedSynonym))) {
+        if (!best || normalizedSynonym.length > best.length) best = { profileKey, length: normalizedSynonym.length };
+      }
+    }
+  }
+  return best?.profileKey ?? null;
+}
+
+/**
  * Label-only version of the synonym match, for widgets that aren't a native input/select/textarea (for
  * example an ARIA combobox button) and so never go through `detectFields`. Same exact-then-alias rule,
  * same no-guess-on-weak-match behaviour as `matchFieldHeuristically`.
@@ -46,10 +67,7 @@ export function matchLabelToProfileKey(label: string): string | null {
   for (const [profileKey, synonyms] of Object.entries(SYNONYMS)) {
     if (synonyms.some((synonym) => normalize(synonym) === haystack)) return profileKey;
   }
-  for (const [profileKey, synonyms] of Object.entries(SYNONYMS)) {
-    if (synonyms.some((synonym) => haystack.includes(normalize(synonym)))) return profileKey;
-  }
-  return null;
+  return bestAliasMatch([haystack], Object.entries(SYNONYMS));
 }
 
 const AUTOCOMPLETE_MAP: Record<string, string> = {
@@ -85,14 +103,8 @@ export function matchFieldHeuristically(field: DetectedField): FieldMatch | null
       }
     }
   }
-  for (const [profileKey, synonyms] of Object.entries(SYNONYMS)) {
-    for (const synonym of synonyms) {
-      const normalizedSynonym = normalize(synonym);
-      if (haystacks.some((haystack) => haystack.includes(normalizedSynonym))) {
-        return { fieldId: field.id, profileKey, confidence: "alias" };
-      }
-    }
-  }
+  const aliasMatch = bestAliasMatch(haystacks, Object.entries(SYNONYMS));
+  if (aliasMatch) return { fieldId: field.id, profileKey: aliasMatch, confidence: "alias" };
   return null;
 }
 

@@ -3,7 +3,7 @@ import type { DetectedField } from "./types";
 
 const CATEGORY_PATTERNS: Record<SensitiveCategoryId, RegExp> = {
   gender: /\bgender\b|\bsex\b(?!ual orientation)/i,
-  ethnicity: /ethnicit|race\b|racial/i,
+  ethnicity: /ethnicit|\bethnic\b|race\b|racial/i,
   disability: /disabilit/i,
   veteran: /veteran|armed forces/i,
   sexualOrientation: /sexual orientation|lgbt/i,

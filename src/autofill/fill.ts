@@ -1,5 +1,5 @@
 import { matchFieldsHeuristically } from "./heuristics";
-import { matchDropdownOption } from "./dropdownMatch";
+import { resolveDropdownOption } from "./resolveOption";
 import { dispatchChangeEvents, isEmpty, setCheckbox, setRadioGroup, setSelectValue, setTextValue } from "./setValue";
 import { setDateInputValue, toIsoDateString } from "./dateFormat";
 import type { DetectedField, FieldMatch, ProfileValueMap } from "./types";
@@ -83,7 +83,9 @@ export function fillFields(
     }
 
     if (field.kind === "select") {
-      const matched = matchDropdownOption(value, field.options);
+      // Falls back to a numeric-range match (e.g. a saved salary of "50000" against an option
+      // labeled "£40,000 - £50,000") when there's no exact/alias/partial text match.
+      const matched = resolveDropdownOption(value, field.options);
       if (!matched.option || matched.confidence === "low") {
         outcomes.push({ fieldId: field.id, status: "skipped_low_confidence", profileKey: match.profileKey });
         continue;
@@ -96,7 +98,7 @@ export function fillFields(
     }
 
     if (field.kind === "radio" && field.groupElements) {
-      const matched = matchDropdownOption(value, field.options);
+      const matched = resolveDropdownOption(value, field.options);
       if (!matched.option || matched.confidence === "low") {
         outcomes.push({ fieldId: field.id, status: "skipped_low_confidence", profileKey: match.profileKey });
         continue;

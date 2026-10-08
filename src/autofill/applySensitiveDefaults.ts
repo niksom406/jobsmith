@@ -2,6 +2,7 @@ import type { SensitiveDefaults } from "../schemas/sensitiveDefaults";
 import { dispatchChangeEvents, setCheckbox, setRadioGroup, setSelectValue, setTextValue, isEmpty } from "./setValue";
 import { setDateInputValue, toIsoDateString } from "./dateFormat";
 import { detectSensitiveCategory, findPreferNotToSayOption } from "./sensitiveFields";
+import { resolveDropdownOption } from "./resolveOption";
 import type { DetectedField, FieldMatch } from "./types";
 import type { FillOutcome, UndoEntry } from "./fill";
 
@@ -73,19 +74,23 @@ export function applySensitiveDefaults(fields: DetectedField[], defaults: Sensit
       continue;
     }
     if (field.kind === "select") {
-      const matchedOption = field.options.find((option) => option.label.toLowerCase() === value.toLowerCase());
-      if (matchedOption) {
+      // Same exact -> alias -> word-boundary-partial -> numeric-range cascade as every other
+      // dropdown fill, instead of requiring the saved value to exactly equal an option's label.
+      // That strict-equality version is why "Indian" never matched "Asian or Asian British -
+      // Indian", or why a saved age of "25" never matched an "Age group" select offering "25-34".
+      const matched = resolveDropdownOption(value, field.options);
+      if (matched.option) {
         undo.push({ element: field.element, kind: "select", previousValue: (field.element as HTMLSelectElement).value });
-        setSelectValue(field.element as HTMLSelectElement, matchedOption.value);
+        setSelectValue(field.element as HTMLSelectElement, matched.option.value);
         outcomes.push({ fieldId: field.id, status: "filled" });
       } else {
         outcomes.push({ fieldId: field.id, status: "skipped_low_confidence" });
       }
     } else if (field.kind === "radio" && field.groupElements) {
-      const matchedOption = field.options.find((option) => option.label.toLowerCase() === value.toLowerCase());
+      const matched = resolveDropdownOption(value, field.options);
       const groupElements = field.groupElements;
       const firstGroupElement = groupElements[0];
-      if (matchedOption && firstGroupElement) {
+      if (matched.option && firstGroupElement) {
         undo.push({
           element: firstGroupElement,
           kind: "radio",
@@ -93,7 +98,7 @@ export function applySensitiveDefaults(fields: DetectedField[], defaults: Sensit
           groupElements,
           previousGroupChecked: groupElements.map((element) => (element as HTMLInputElement).checked),
         });
-        setRadioGroup(groupElements as HTMLInputElement[], matchedOption.value);
+        setRadioGroup(groupElements as HTMLInputElement[], matched.option.value);
         outcomes.push({ fieldId: field.id, status: "filled" });
       } else {
         outcomes.push({ fieldId: field.id, status: "skipped_low_confidence" });

@@ -30,6 +30,20 @@ function labelFor(element: HTMLElement, root: ParentNode): string {
   return element.getAttribute("placeholder") ?? element.getAttribute("name") ?? "";
 }
 
+/**
+ * A radio group's real "question" is almost never the first radio's own wrapping label -- a very
+ * common pattern wraps each option individually (`<label><input type="radio">Yes</label>`), so
+ * `labelFor()` on just the first radio would return "Yes", not the actual question. Prefer the
+ * enclosing `<fieldset>`'s `<legend>` (the semantically-correct question text) when there is one.
+ */
+function radioGroupLabel(elements: HTMLInputElement[], root: ParentNode): string {
+  const first = elements[0];
+  if (!first) return "";
+  const legend = first.closest("fieldset")?.querySelector("legend")?.textContent?.trim();
+  if (legend) return legend;
+  return labelFor(first, root);
+}
+
 function kindForInput(element: HTMLInputElement): FieldKind {
   if (element.type === "radio") return "radio";
   if (element.type === "checkbox") return "checkbox";
@@ -109,7 +123,7 @@ export function detectFields(root: ParentNode = document): DetectedField[] {
     fields.push({
       id: `field-${autoId}`,
       kind: "radio",
-      label: labelFor(first, root),
+      label: radioGroupLabel(group.elements, root),
       name,
       autocomplete: "",
       required: group.elements.some((element) => element.required),

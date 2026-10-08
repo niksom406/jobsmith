@@ -64,3 +64,37 @@ test("a saved date the browser can't parse is reported as skipped, not a mislead
   expect(result.outcomes[0]?.status).toBe("skipped_low_confidence");
   expect((document.getElementById("dob") as HTMLInputElement).value).toBe("");
 });
+
+test("use_saved_answer matches a bucketed ethnicity option, not just an exact label", () => {
+  document.body.innerHTML = `
+    <label for="ethnicity">Ethnic group</label>
+    <select id="ethnicity">
+      <option value="">Please select</option>
+      <option value="indian">Asian or Asian British - Indian</option>
+      <option value="pakistani">Asian or Asian British - Pakistani</option>
+    </select>
+  `;
+  const fields = detectFields(document);
+  const defaults = createEmptySensitiveDefaults();
+  defaults.categories.ethnicity = { mode: "use_saved_answer", savedValue: "Indian", encrypted: false };
+  const result = applySensitiveDefaults(fields, defaults);
+  expect(result.outcomes[0]?.status).toBe("filled");
+  expect((document.getElementById("ethnicity") as HTMLSelectElement).value).toBe("indian");
+});
+
+test("use_saved_answer matches a saved age into an Age group bucket, not a free-text equality check", () => {
+  document.body.innerHTML = `
+    <label for="age">Age group</label>
+    <select id="age">
+      <option value="">Please select</option>
+      <option value="18-24">18-24</option>
+      <option value="25-34">25-34</option>
+    </select>
+  `;
+  const fields = detectFields(document);
+  const defaults = createEmptySensitiveDefaults();
+  defaults.categories.dateOfBirth = { mode: "use_saved_answer", savedValue: "25", encrypted: false };
+  const result = applySensitiveDefaults(fields, defaults);
+  expect(result.outcomes[0]?.status).toBe("filled");
+  expect((document.getElementById("age") as HTMLSelectElement).value).toBe("25-34");
+});

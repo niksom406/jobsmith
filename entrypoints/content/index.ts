@@ -9,6 +9,7 @@ import { showSaveAnswerBanner } from "../../src/autofill/saveAnswerBanner";
 import { saveAnswerRequestSchema } from "../../src/messaging/answerBankTypes";
 import type { FieldSummary, FillStatus } from "../../src/messaging/fillTypes";
 import { applySensitiveDefaults, removeSensitiveMatches } from "../../src/autofill/applySensitiveDefaults";
+import { applyRightToWork } from "../../src/autofill/rightToWork";
 import { decryptSensitiveDefaultsForFill } from "../../src/autofill/decryptSensitiveDefaults";
 import { createEmptyPreferences, preferencesSchema } from "../../src/schemas/preferences";
 import { createEmptyProfile, profileSchema } from "../../src/schemas/profile";
@@ -303,7 +304,12 @@ export default defineContentScript({
       const fields = detectFields(document);
       const { profile, preferences, sensitiveDefaults } = await loadProfileAndPreferences();
       const sensitiveFieldIds = new Set(fields.filter((field) => Boolean(detectSensitiveCategory(field))).map((field) => field.id));
-      const { matches, unmatched } = matchFieldsHeuristically(fields.filter((field) => !sensitiveFieldIds.has(field.id)));
+      const rightToWorkFieldIds = new Set(
+        fields.filter((field) => (field.kind === "select" || field.kind === "radio") && /right to work/i.test(field.label)).map((field) => field.id),
+      );
+      const { matches, unmatched } = matchFieldsHeuristically(
+        fields.filter((field) => !sensitiveFieldIds.has(field.id) && !rightToWorkFieldIds.has(field.id)),
+      );
       const values = flattenProfileValues(profile, preferences);
       const { outcomes } = fillFields(fields, matches, values);
 
@@ -320,6 +326,10 @@ export default defineContentScript({
       for (const fieldId of sensitiveFieldIds) {
         const field = byId.get(fieldId);
         if (field) summaries.push({ id: field.id, label: field.label, kind: field.kind, status: "skipped_sensitive" });
+      }
+      for (const fieldId of rightToWorkFieldIds) {
+        const field = byId.get(fieldId);
+        if (field) summaries.push({ id: field.id, label: field.label, kind: field.kind, status: "unmatched" });
       }
       void sensitiveDefaults; // Detection-only pass does not write sensitive values; see "run-fill" below.
 
@@ -345,11 +355,13 @@ export default defineContentScript({
           const decryptedSensitiveDefaults = await decryptSensitiveDefaultsForFill(sensitiveDefaults);
 
           const sensitiveResult = applySensitiveDefaults(fields, decryptedSensitiveDefaults);
+          const rightToWorkResult = applyRightToWork(fields, preferences.rightToWork);
+          const excludedFieldIds = new Set([...sensitiveResult.excludedFieldIds, ...rightToWorkResult.excludedFieldIds]);
           const { matches, unmatched } = matchFieldsHeuristically(
-            fields.filter((field) => !sensitiveResult.excludedFieldIds.has(field.id)),
+            fields.filter((field) => !excludedFieldIds.has(field.id)),
           );
           const values = flattenProfileValues(profile, preferences);
-          const safeMatches = removeSensitiveMatches(matches, sensitiveResult.excludedFieldIds);
+          const safeMatches = removeSensitiveMatches(matches, excludedFieldIds);
           const { outcomes, undo } = fillFields(fields, safeMatches, values);
 
           const bank = await fetchAnswerBank();
@@ -367,8 +379,16 @@ export default defineContentScript({
               ? [...(await fillAriaComboboxes(document, values)), ...fillWorkdayDateGroups(document, values)]
               : [];
 
-          lastUndo = [...undo, ...fromBank.undo, ...fromMapping.undo, ...sensitiveResult.undo, ...fromAiDraft.undo];
-          const allOutcomes = [...outcomes, ...fromBank.outcomes, ...fromMapping.outcomes, ...sensitiveResult.outcomes, ...fileOutcomes, ...fromAiDraft.outcomes];
+          lastUndo = [...undo, ...fromBank.undo, ...fromMapping.undo, ...sensitiveResult.undo, ...rightToWorkResult.undo, ...fromAiDraft.undo];
+          const allOutcomes = [
+            ...outcomes,
+            ...fromBank.outcomes,
+            ...fromMapping.outcomes,
+            ...sensitiveResult.outcomes,
+            ...rightToWorkResult.outcomes,
+            ...fileOutcomes,
+            ...fromAiDraft.outcomes,
+          ];
 
           const byId = new Map(fields.map((field) => [field.id, field]));
           const summaries: FieldSummary[] = allOutcomes.map((outcome) => ({
