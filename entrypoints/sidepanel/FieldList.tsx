@@ -35,30 +35,86 @@ function ArrowIcon() {
   );
 }
 
+/** Counterclockwise-arrows ("🔄") icon -- regenerates the drafted answer in a different tone. */
+function RegenerateIcon({ spinning }: { spinning?: boolean }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width="14"
+      height="14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={spinning ? "inline-block animate-spin" : "inline-block"}
+    >
+      <polyline points="1 4 1 10 7 10" />
+      <polyline points="23 20 23 14 17 14" />
+      <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10" />
+      <path d="M3.51 15a9 9 0 0 0 14.85 3.36L23 14" />
+    </svg>
+  );
+}
+
+/** Undo-style curved arrow -- steps this one field back to the version it held before the last regenerate. */
+function RevertIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="inline-block">
+      <path d="M9 14 4 9l5-5" />
+      <path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11" />
+    </svg>
+  );
+}
+
 const OVERRIDE_ELIGIBLE = new Set<FieldSummary["status"]>(["unmatched", "skipped_no_value", "skipped_low_confidence"]);
 
 export function FieldList({
   fields,
   onReplace,
+  onRevert,
   onSetOverride,
 }: {
   fields: FieldSummary[];
-  onReplace?: (fieldId: string) => Promise<void>;
+  onReplace?: (fieldId: string) => Promise<{ ok: boolean; canRevert?: boolean; error?: string }>;
+  onRevert?: (fieldId: string) => Promise<{ ok: boolean; canRevert?: boolean; error?: string }>;
   onSetOverride?: (fieldId: string, profileKey: string) => Promise<void>;
 }) {
   const [replacingId, setReplacingId] = useState<string | null>(null);
+  const [revertingId, setRevertingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [savingOverrideId, setSavingOverrideId] = useState<string | null>(null);
+  // Whether each AI-drafted field has an earlier version to step back to -- starts false (the first
+  // draft has nothing before it) and flips to true after the first "Regenerate" click on that field.
+  const [canRevertByField, setCanRevertByField] = useState<Record<string, boolean>>({});
+  const [fieldError, setFieldError] = useState<{ fieldId: string; message: string } | null>(null);
 
   if (fields.length === 0) return <p className="text-sm text-muted">No fields detected on this page yet.</p>;
 
   async function handleReplace(fieldId: string) {
     if (!onReplace) return;
     setReplacingId(fieldId);
+    setFieldError(null);
     try {
-      await onReplace(fieldId);
+      const result = await onReplace(fieldId);
+      if (result.ok) setCanRevertByField((current) => ({ ...current, [fieldId]: result.canRevert ?? true }));
+      else setFieldError({ fieldId, message: result.error ?? "Could not draft a different answer." });
     } finally {
       setReplacingId(null);
+    }
+  }
+
+  async function handleRevert(fieldId: string) {
+    if (!onRevert) return;
+    setRevertingId(fieldId);
+    setFieldError(null);
+    try {
+      const result = await onRevert(fieldId);
+      if (result.ok) setCanRevertByField((current) => ({ ...current, [fieldId]: result.canRevert ?? false }));
+      else setFieldError({ fieldId, message: result.error ?? "Could not go back to the previous version." });
+    } finally {
+      setRevertingId(null);
     }
   }
 
@@ -126,16 +182,37 @@ export function FieldList({
                   <span className="text-muted">Remembered for this site.</span>
                 </div>
               ) : null}
-              {field.status === "filled_ai_draft" && onReplace ? (
-                <button
-                  type="button"
-                  disabled={replacingId === field.id}
-                  onClick={() => void handleReplace(field.id)}
-                  className="rounded-md border border-line px-2 py-1 text-xs text-muted hover:text-ink disabled:opacity-50"
-                >
-                  {replacingId === field.id ? "…" : "Replace"}
-                </button>
+              {field.status === "filled_ai_draft" && (onReplace || onRevert) ? (
+                <div className="flex items-center gap-2 pt-1">
+                  {onReplace ? (
+                    <button
+                      type="button"
+                      title="Regenerate in a different tone"
+                      aria-label="Regenerate in a different tone"
+                      disabled={replacingId === field.id}
+                      onClick={() => void handleReplace(field.id)}
+                      className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-muted hover:text-ink disabled:opacity-50"
+                    >
+                      <RegenerateIcon spinning={replacingId === field.id} />
+                      Regenerate
+                    </button>
+                  ) : null}
+                  {onRevert ? (
+                    <button
+                      type="button"
+                      title="Go back to the previous version"
+                      aria-label="Go back to the previous version"
+                      disabled={revertingId === field.id || !canRevertByField[field.id]}
+                      onClick={() => void handleRevert(field.id)}
+                      className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-muted hover:text-ink disabled:opacity-50"
+                    >
+                      <RevertIcon />
+                      {revertingId === field.id ? "…" : "Previous version"}
+                    </button>
+                  ) : null}
+                </div>
               ) : null}
+              {fieldError?.fieldId === field.id ? <p className="text-clay">{fieldError.message}</p> : null}
             </div>
           ) : null}
         </li>

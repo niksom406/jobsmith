@@ -34,6 +34,22 @@ export const replaceFieldAnswerRequestSchema = z.strictObject({
 });
 
 export const replaceFieldAnswerResultSchema = z.discriminatedUnion("ok", [
-  z.strictObject({ ok: z.literal(true) }),
+  z.strictObject({ ok: z.literal(true), canRevert: z.boolean() }),
+  z.strictObject({ ok: z.literal(false), error: z.string() }),
+]);
+
+/**
+ * Steps a field drafted by Jobsmith back to the variant it held before the last "Replace" click --
+ * one step per click, back through this field's own history (separate from the page-wide "Undo"
+ * button, which reverts every field Jobsmith touched this fill back to what was on the page before
+ * it ran at all).
+ */
+export const revertFieldAnswerRequestSchema = z.strictObject({
+  type: z.literal("revert-field-answer"),
+  payload: z.strictObject({ fieldId: z.string() }),
+});
+
+export const revertFieldAnswerResultSchema = z.discriminatedUnion("ok", [
+  z.strictObject({ ok: z.literal(true), canRevert: z.boolean() }),
   z.strictObject({ ok: z.literal(false), error: z.string() }),
 ]);

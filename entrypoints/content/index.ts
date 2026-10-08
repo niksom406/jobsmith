@@ -37,6 +37,8 @@ import {
   draftFieldAnswerResultSchema,
   replaceFieldAnswerRequestSchema,
   replaceFieldAnswerResultSchema,
+  revertFieldAnswerRequestSchema,
+  revertFieldAnswerResultSchema,
 } from "../../src/messaging/draftFieldTypes";
 import { defineContentScript } from "wxt/utils/define-content-script";
 
@@ -524,7 +526,7 @@ export default defineContentScript({
             const text = entry.variants[nextIndex]?.text ?? "";
             setTextValue(entry.element, text);
             aiDraftState.set(fieldId, { ...entry, usedIndex: nextIndex });
-            sendResponse(replaceFieldAnswerResultSchema.parse({ ok: true }));
+            sendResponse(replaceFieldAnswerResultSchema.parse({ ok: true, canRevert: true }));
             return;
           }
 
@@ -550,10 +552,35 @@ export default defineContentScript({
             }
             setTextValue(entry.element, text);
             aiDraftState.set(fieldId, { ...entry, variants: [...entry.variants, ...parsed.data.variants], usedIndex: entry.variants.length });
-            sendResponse(replaceFieldAnswerResultSchema.parse({ ok: true }));
+            sendResponse(replaceFieldAnswerResultSchema.parse({ ok: true, canRevert: true }));
           } catch {
             sendResponse(replaceFieldAnswerResultSchema.parse({ ok: false, error: "Could not reach the extension background." }));
           }
+        })();
+        return true;
+      }
+      if (message?.type === "revert-field-answer") {
+        void (async () => {
+          const parsedRequest = revertFieldAnswerRequestSchema.safeParse(message);
+          if (!parsedRequest.success) {
+            sendResponse({ ok: false, error: "Invalid request." });
+            return;
+          }
+          const fieldId = parsedRequest.data.payload.fieldId;
+          const entry = aiDraftState.get(fieldId);
+          if (!entry) {
+            sendResponse(revertFieldAnswerResultSchema.parse({ ok: false, error: "This field was not auto-drafted by Jobsmith." }));
+            return;
+          }
+          if (entry.usedIndex === 0) {
+            sendResponse(revertFieldAnswerResultSchema.parse({ ok: false, error: "This is already the first version drafted for this field." }));
+            return;
+          }
+          const previousIndex = entry.usedIndex - 1;
+          const text = entry.variants[previousIndex]?.text ?? "";
+          setTextValue(entry.element, text);
+          aiDraftState.set(fieldId, { ...entry, usedIndex: previousIndex });
+          sendResponse(revertFieldAnswerResultSchema.parse({ ok: true, canRevert: previousIndex > 0 }));
         })();
         return true;
       }

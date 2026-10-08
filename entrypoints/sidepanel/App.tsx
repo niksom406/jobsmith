@@ -36,9 +36,20 @@ export default function App() {
     await detect();
   }
 
-  async function replace(fieldId: string) {
-    const result = await sendToTab<{ ok: boolean; error?: string }>({ type: "replace-field-answer", payload: { fieldId } });
-    if (!result?.ok) setError(result?.error ?? "Could not draft a different answer.");
+  async function replace(fieldId: string): Promise<{ ok: boolean; canRevert?: boolean; error?: string }> {
+    const result = await sendToTab<{ ok: boolean; canRevert?: boolean; error?: string }>({
+      type: "replace-field-answer",
+      payload: { fieldId },
+    });
+    return result ?? { ok: false, error: "Could not reach the extension content script." };
+  }
+
+  async function revert(fieldId: string): Promise<{ ok: boolean; canRevert?: boolean; error?: string }> {
+    const result = await sendToTab<{ ok: boolean; canRevert?: boolean; error?: string }>({
+      type: "revert-field-answer",
+      payload: { fieldId },
+    });
+    return result ?? { ok: false, error: "Could not reach the extension content script." };
   }
 
   async function setOverride(fieldId: string, profileKey: string) {
@@ -101,7 +112,7 @@ export default function App() {
                   ? `${filledCount} of ${status.totalFields} fields would be filled. Click a field below to see why, or the value it would get. Nothing on the page has changed yet.`
                   : `${filledCount} of ${status.totalFields} fields filled. Review everything before you submit — Jobsmith never clicks Submit or Next for you.`}
               </p>
-              <FieldList fields={status.fields} onReplace={replace} onSetOverride={setOverride} />
+              <FieldList fields={status.fields} onReplace={replace} onRevert={revert} onSetOverride={setOverride} />
             </>
           ) : null}
         </div>
