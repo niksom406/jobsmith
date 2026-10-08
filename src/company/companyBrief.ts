@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { callLlmJson } from "../llm/client";
+import { isAtsVendorHostname } from "../sites/access";
 import { db } from "../storage/db";
 
 const briefSchema = z.strictObject({ brief: z.string() });
@@ -30,31 +31,44 @@ export interface CompanyBriefResult {
 }
 
 /**
- * Checks the cache by domain first. If missing, tries an OpenAI web-search-backed summary, then the
+ * Checks the cache first. If missing, tries an OpenAI web-search-backed summary, then the
  * company's About page, and otherwise reports "none" so the caller can ask the user for a few lines.
+ *
+ * `domain` is ignored when it's an ATS vendor's own hosting domain (e.g. jobs.ashbyhq.com,
+ * boards.greenhouge.io) — that domain describes the ATS platform, not the company actually
+ * hiring through it, and using it produces a brief about Ashby/Greenhouse/etc instead of the
+ * employer. `companyName` (extracted from the page's JSON-LD or title) is used instead whenever
+ * the domain isn't usable.
  */
 export async function getCompanyBrief(options: {
   domain: string;
+  companyName?: string | null;
   apiKey: string;
   model: string;
   fetchImpl?: typeof fetch;
 }): Promise<CompanyBriefResult> {
-  const cached = await db.companyCache.get(options.domain);
+  const effectiveDomain = options.domain && !isAtsVendorHostname(options.domain) ? options.domain : "";
+  const companyName = options.companyName?.trim() || "";
+  const cacheKey = effectiveDomain || (companyName ? `name:${companyName.toLowerCase()}` : "");
+  if (!cacheKey) return { brief: "", source: "none" };
+
+  const cached = await db.companyCache.get(cacheKey);
   if (cached) return { brief: cached.brief, source: "cache" };
 
   const fetchImpl = options.fetchImpl ?? fetch;
+  const subjectLine = effectiveDomain ? `Company domain: ${effectiveDomain}` : `Company name: ${companyName}`;
 
   try {
     const result = await callLlmJson({
       apiKey: options.apiKey,
       model: options.model,
       system:
-        "Use the web_search tool to look up the company at the given domain before answering. Search for its own site, " +
-        "news, or a reputable profile (e.g. Crunchbase, LinkedIn) — do not rely on what you already know, since that can be " +
-        "outdated or wrong. Then write a short, factual, three-sentence brief: what the company does, who it serves, and " +
-        "one notable fact from what you found. If the search turns up nothing reliable about this specific company, say so " +
-        "plainly instead of guessing.",
-      user: `Company domain: ${options.domain}`,
+        "Use the web_search tool to look up the company named or at the domain given before answering. Search for its own " +
+        "site, news, or a reputable profile (e.g. Crunchbase, LinkedIn) — do not rely on what you already know, since that " +
+        "can be outdated or wrong. Then write a short, factual, three-sentence brief about that specific company: what it " +
+        "does, who it serves, and one notable fact from what you found. If the search turns up nothing reliable about this " +
+        "specific company, say so plainly instead of guessing.",
+      user: subjectLine,
       schema: briefSchema,
       schemaName: "company_brief",
       fetchImpl,
@@ -62,7 +76,7 @@ export async function getCompanyBrief(options: {
       tools: [{ type: "web_search" }],
     });
     if (result.data.brief && !/not confident|cannot find|unable to|nothing reliable/i.test(result.data.brief)) {
-      await db.companyCache.put({ schemaVersion: 1, domain: options.domain, brief: result.data.brief, source: "web_search", fetchedAt: new Date().toISOString() });
+      await db.companyCache.put({ schemaVersion: 1, domain: cacheKey, brief: result.data.brief, source: "web_search", fetchedAt: new Date().toISOString() });
       return { brief: result.data.brief, source: "web_search" };
     }
   } catch {
@@ -70,10 +84,12 @@ export async function getCompanyBrief(options: {
     // Fall through to the About page fetch, which doesn't need it.
   }
 
-  const aboutText = await fetchAboutPageText(options.domain, fetchImpl);
-  if (aboutText) {
-    await db.companyCache.put({ schemaVersion: 1, domain: options.domain, brief: aboutText, source: "about_page", fetchedAt: new Date().toISOString() });
-    return { brief: aboutText, source: "about_page" };
+  if (effectiveDomain) {
+    const aboutText = await fetchAboutPageText(effectiveDomain, fetchImpl);
+    if (aboutText) {
+      await db.companyCache.put({ schemaVersion: 1, domain: cacheKey, brief: aboutText, source: "about_page", fetchedAt: new Date().toISOString() });
+      return { brief: aboutText, source: "about_page" };
+    }
   }
 
   return { brief: "", source: "none" };

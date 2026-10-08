@@ -12,6 +12,7 @@ export const draftFieldAnswerRequestSchema = z.strictObject({
     question: z.string().min(1),
     jobDescription: z.string().min(1),
     companyDomain: z.string(),
+    companyName: z.string(),
     // Previous drafts for this same field, sent back in on a "Replace" click so the model writes
     // something different rather than a near-duplicate.
     avoidTexts: z.array(z.string()),

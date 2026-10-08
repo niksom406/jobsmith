@@ -55,3 +55,34 @@ test("reports none when every source fails, instead of guessing", async () => {
   const result = await getCompanyBrief({ domain: "unknown.example", apiKey: "sk-test", model: "gpt-6-luna", fetchImpl });
   expect(result).toEqual({ brief: "", source: "none" });
 });
+
+test("ignores an ATS vendor's own hosting domain and searches by company name instead", async () => {
+  const captured: { body: unknown } = { body: null };
+  const fetchImpl: typeof fetch = async (_input, init) => {
+    captured.body = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({ output_text: JSON.stringify({ brief: "Acme Robotics builds warehouse automation." }) }), { status: 200 });
+  };
+  const result = await getCompanyBrief({
+    domain: "jobs.ashbyhq.com",
+    companyName: "Acme Robotics",
+    apiKey: "sk-test",
+    model: "gpt-6-luna",
+    fetchImpl,
+  });
+  expect(result.source).toBe("web_search");
+  expect(result.brief).toContain("Acme Robotics");
+  const sentInput = (captured.body as { input: { content: string }[] }).input;
+  expect(sentInput[1]?.content).toContain("Company name: Acme Robotics");
+  expect(sentInput[1]?.content).not.toContain("ashbyhq.com");
+});
+
+test("without a company name, an ATS vendor domain alone reports none rather than describing the ATS platform", async () => {
+  let called = false;
+  const fetchImpl: typeof fetch = async () => {
+    called = true;
+    return new Response("", { status: 404 });
+  };
+  const result = await getCompanyBrief({ domain: "boards.greenhouse.io", apiKey: "sk-test", model: "gpt-6-luna", fetchImpl });
+  expect(result).toEqual({ brief: "", source: "none" });
+  expect(called).toBe(false);
+});

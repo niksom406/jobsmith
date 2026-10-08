@@ -6,6 +6,7 @@ export const draftAnswersRequestSchema = z.strictObject({
     question: z.string().min(1),
     jobDescription: z.string(),
     companyDomain: z.string(),
+    companyName: z.string(),
     userNotes: z.string(),
     characterLimit: z.number().nullable(),
   }),

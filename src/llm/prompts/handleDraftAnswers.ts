@@ -46,8 +46,13 @@ export async function handleDraftAnswersRequest(payload: DraftAnswersRequest["pa
 
   let companyBriefSource: "cache" | "web_search" | "about_page" | "user" | "none" = "none";
   let companyBrief = "";
-  if (payload.companyDomain) {
-    const brief = await getCompanyBrief({ domain: payload.companyDomain, apiKey: settings.apiKey, model: settings.models.parse });
+  if (payload.companyDomain || payload.companyName) {
+    const brief = await getCompanyBrief({
+      domain: payload.companyDomain,
+      companyName: payload.companyName,
+      apiKey: settings.apiKey,
+      model: settings.models.parse,
+    });
     companyBrief = brief.brief;
     companyBriefSource = brief.source;
   }

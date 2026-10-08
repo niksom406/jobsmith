@@ -102,7 +102,7 @@ export default defineBackground(() => {
     const draftFieldAnswer = draftFieldAnswerRequestSchema.safeParse(message);
     if (draftFieldAnswer.success) {
       void (async () => {
-        const { question, jobDescription, companyDomain, avoidTexts } = draftFieldAnswer.data.payload;
+        const { question, jobDescription, companyDomain, companyName, avoidTexts } = draftFieldAnswer.data.payload;
         const stored = await chromeLocalArea.get([LOCAL_KEYS.settings, LOCAL_KEYS.profile]);
         const settingsParsed = settingsSchema.safeParse(stored[LOCAL_KEYS.settings]);
         const profileParsed = profileSchema.safeParse(stored[LOCAL_KEYS.profile]);
@@ -115,9 +115,9 @@ export default defineBackground(() => {
         }
 
         let companyBrief = "";
-        if (companyDomain) {
+        if (companyDomain || companyName) {
           try {
-            const brief = await getCompanyBrief({ domain: companyDomain, apiKey: settings.apiKey, model: settings.models.parse });
+            const brief = await getCompanyBrief({ domain: companyDomain, companyName, apiKey: settings.apiKey, model: settings.models.parse });
             companyBrief = brief.brief;
           } catch {
             // A missing company brief does not block an auto-drafted answer — the job description

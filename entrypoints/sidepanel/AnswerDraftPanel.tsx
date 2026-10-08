@@ -9,6 +9,7 @@ export function AnswerDraftPanel() {
   const [jd, setJd] = useState<ExtractedJd | null>(null);
   const [jdPaste, setJdPaste] = useState("");
   const [domain, setDomain] = useState("");
+  const [companyName, setCompanyName] = useState("");
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<DraftAnswersResult | null>(null);
@@ -17,6 +18,7 @@ export function AnswerDraftPanel() {
   async function loadJd() {
     const found = await sendToTab<ExtractedJd>({ type: "get-job-description" });
     setJd(found);
+    setCompanyName(found?.companyName ?? "");
     if (typeof chrome !== "undefined" && chrome.tabs) {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (tab?.url) {
@@ -41,7 +43,7 @@ export function AnswerDraftPanel() {
     try {
       const message = draftAnswersRequestSchema.parse({
         type: "draft-answers",
-        payload: { question, jobDescription, companyDomain: domain, userNotes: notes, characterLimit: null },
+        payload: { question, jobDescription, companyDomain: domain, companyName, userNotes: notes, characterLimit: null },
       });
       const response = (await chrome.runtime.sendMessage(message)) as DraftAnswersResult;
       setResult(response);
@@ -81,6 +83,21 @@ export function AnswerDraftPanel() {
         />
       ) : null}
       {jd && jd.source !== "none" ? <p className="text-sm text-muted">Job description read from this page ({jd.source}).</p> : null}
+      {jd ? (
+        <div>
+          <label className="mb-1 block text-xs text-muted" htmlFor="draft-company-name">
+            Company name (used for the brief — correct it if this is wrong)
+          </label>
+          <input
+            id="draft-company-name"
+            type="text"
+            value={companyName}
+            onChange={(event) => setCompanyName(event.target.value)}
+            placeholder="e.g. Acme Robotics"
+            className="w-full rounded-md border border-line bg-card px-3 py-2 text-sm"
+          />
+        </div>
+      ) : null}
       <textarea
         value={notes}
         onChange={(event) => setNotes(event.target.value)}

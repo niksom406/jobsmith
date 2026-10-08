@@ -51,6 +51,20 @@ export const KNOWN_ATS: KnownAts[] = [
   },
 ];
 
+const ATS_VENDOR_SUFFIXES = KNOWN_ATS.flatMap((ats) =>
+  ats.origins.map((origin) => origin.replace(/^https:\/\/\*\./, "").replace(/\/\*$/, "")),
+);
+
+/**
+ * True for the ATS vendor's own hosting domain (e.g. jobs.ashbyhq.com, boards.greenhouse.io).
+ * That domain describes the ATS platform itself, not the company actually hiring through it --
+ * using it for a company brief lookup would describe Ashby/Greenhouse/etc, not the employer.
+ */
+export function isAtsVendorHostname(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  return ATS_VENDOR_SUFFIXES.some((suffix) => lower === suffix || lower.endsWith(`.${suffix}`));
+}
+
 /** Chrome match pattern for one site, or null when the URL must not be enabled. */
 export function originPatternFromUrl(url: string): string | null {
   if (isAutomationBlocked(url)) return null;

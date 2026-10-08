@@ -257,7 +257,13 @@ export default defineContentScript({
           const response = await chrome.runtime.sendMessage(
             draftFieldAnswerRequestSchema.parse({
               type: "draft-field-answer",
-              payload: { question: field.label, jobDescription: jd.text, companyDomain: window.location.hostname, avoidTexts: [] },
+              payload: {
+                question: field.label,
+                jobDescription: jd.text,
+                companyDomain: window.location.hostname,
+                companyName: jd.companyName ?? "",
+                avoidTexts: [],
+              },
             }),
           );
           const parsed = draftFieldAnswerResultSchema.safeParse(response);
@@ -428,6 +434,7 @@ export default defineContentScript({
                   question: entry.question,
                   jobDescription: jd.text,
                   companyDomain: window.location.hostname,
+                  companyName: jd.companyName ?? "",
                   avoidTexts: entry.variants.map((variant) => variant.text),
                 },
               }),
