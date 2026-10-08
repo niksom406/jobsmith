@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { isAutomationBlocked, KNOWN_ATS, originPatternFromUrl } from "./access";
+import { isAtsVendorHostname, isAtsVendorName, isAutomationBlocked, KNOWN_ATS, originPatternFromUrl } from "./access";
 
 test("blocks LinkedIn and allows a Greenhouse board", () => {
   expect(isAutomationBlocked("https://www.linkedin.com/jobs/view/123")).toBe(true);
@@ -10,6 +10,18 @@ test("blocks LinkedIn and allows a Greenhouse board", () => {
 test("refuses a site pattern for a blocked host", () => {
   expect(originPatternFromUrl("https://www.linkedin.com/jobs/easy-apply")).toBeNull();
   expect(originPatternFromUrl("https://jobs.lever.co/acme/role")).toBe("https://jobs.lever.co/*");
+});
+
+test("recognises every known ATS vendor's own hosting domain, not a company's custom domain", () => {
+  expect(isAtsVendorHostname("jobs.ashbyhq.com")).toBe(true);
+  expect(isAtsVendorHostname("boards.greenhouse.io")).toBe(true);
+  expect(isAtsVendorHostname("careers.acme.com")).toBe(false);
+});
+
+test("recognises the ATS vendor's own name so it never leaks through as the employer", () => {
+  expect(isAtsVendorName("Ashby")).toBe(true);
+  expect(isAtsVendorName("  greenhouse ")).toBe(true);
+  expect(isAtsVendorName("Acme Robotics")).toBe(false);
 });
 
 test("known ATS toggles request a single host pattern, not every site", () => {

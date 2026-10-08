@@ -34,7 +34,14 @@ export function matchDropdownOption(storedValue: string, options: DetectedOption
     if (match) return { option: match, confidence: "alias" };
   }
 
-  const partial = options.find((option) => normalize(option.label).includes(target) || target.includes(normalize(option.label)));
+  // Word-boundary substring, not a raw substring: a raw `.includes()` here would match a short
+  // target like "no" inside an unrelated option such as "None" or "Norway". Requiring a boundary
+  // on both sides of the match keeps the "contains the whole target as one of its own words" check
+  // without that false positive, while still catching e.g. target "no" inside "No, thanks".
+  const wordBoundaryContains = (haystack: string, needle: string) => new RegExp(`\\b${needle}\\b`).test(haystack);
+  const partial = options.find(
+    (option) => wordBoundaryContains(normalize(option.label), target) || wordBoundaryContains(target, normalize(option.label)),
+  );
   if (partial) return { option: partial, confidence: "alias" };
 
   return { option: null, confidence: "low" };

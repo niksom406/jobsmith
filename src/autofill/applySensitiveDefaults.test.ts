@@ -44,3 +44,23 @@ test("use_saved_answer fills the saved value and never leaves it for the LLM lay
   expect((document.getElementById("gender") as HTMLSelectElement).value).toBe("f");
   expect(result.excludedFieldIds.has(fields[0]?.id ?? "")).toBe(true);
 });
+
+test("use_saved_answer fills a native date-of-birth input from a free-typed, non-ISO saved value", () => {
+  document.body.innerHTML = `<label for="dob">Date of birth</label><input id="dob" type="date">`;
+  const fields = detectFields(document);
+  const defaults = createEmptySensitiveDefaults();
+  defaults.categories.dateOfBirth = { mode: "use_saved_answer", savedValue: "15/03/1990", encrypted: false };
+  const result = applySensitiveDefaults(fields, defaults);
+  expect(result.outcomes[0]?.status).toBe("filled");
+  expect((document.getElementById("dob") as HTMLInputElement).value).toBe("1990-03-15");
+});
+
+test("a saved date the browser can't parse is reported as skipped, not a misleading 'filled'", () => {
+  document.body.innerHTML = `<label for="dob">Date of birth</label><input id="dob" type="date">`;
+  const fields = detectFields(document);
+  const defaults = createEmptySensitiveDefaults();
+  defaults.categories.dateOfBirth = { mode: "use_saved_answer", savedValue: "whenever I was born", encrypted: false };
+  const result = applySensitiveDefaults(fields, defaults);
+  expect(result.outcomes[0]?.status).toBe("skipped_low_confidence");
+  expect((document.getElementById("dob") as HTMLInputElement).value).toBe("");
+});

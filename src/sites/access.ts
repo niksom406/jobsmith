@@ -65,6 +65,18 @@ export function isAtsVendorHostname(hostname: string): boolean {
   return ATS_VENDOR_SUFFIXES.some((suffix) => lower === suffix || lower.endsWith(`.${suffix}`));
 }
 
+const ATS_VENDOR_NAMES = new Set(KNOWN_ATS.map((ats) => ats.label.toLowerCase()));
+
+/**
+ * True when a page's extracted "company name" is actually the ATS vendor's own name (e.g. a
+ * smaller employer's unbranded Ashby board leaves og:site_name as literally "Ashby"). Catching
+ * this on the name itself matters because isAtsVendorHostname() only guards the domain -- the
+ * extracted name can still leak the vendor's name even off a non-vendor domain.
+ */
+export function isAtsVendorName(name: string): boolean {
+  return ATS_VENDOR_NAMES.has(name.trim().toLowerCase());
+}
+
 /** Chrome match pattern for one site, or null when the URL must not be enabled. */
 export function originPatternFromUrl(url: string): string | null {
   if (isAutomationBlocked(url)) return null;

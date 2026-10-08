@@ -24,3 +24,21 @@ test("does not guess when nothing is close", () => {
   expect(result.option).toBeNull();
   expect(result.confidence).toBe("low");
 });
+
+test("matches a binary yes/no question phrased in words not in the alias list", () => {
+  const options = [
+    { value: "yes", label: "Yes, I will require sponsorship now or in the future" },
+    { value: "no", label: "No, I will not require sponsorship" },
+  ];
+  const result = matchDropdownOption("yes", options);
+  expect(result.option?.value).toBe("yes");
+});
+
+test("the yes/no whole-word match never mistakes 'None' for 'No'", () => {
+  const options = [
+    { value: "none", label: "None" },
+    { value: "yes", label: "Yes" },
+  ];
+  const result = matchDropdownOption("no", options);
+  expect(result.option).toBeNull();
+});

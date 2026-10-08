@@ -1,3 +1,5 @@
+import { isAtsVendorName } from "../sites/access";
+
 export interface ExtractedJd {
   text: string;
   source: "json-ld" | "heuristic" | "none";
@@ -36,23 +38,28 @@ function textFromJsonLd(doc: ParentNode): string | null {
 }
 
 /** Best-effort employer name: JSON-LD's hiringOrganization first, then common "<Role> at
- * <Company>" / og:site_name page-title patterns. Never guesses the ATS vendor's own name. */
+ * <Company>" / og:site_name page-title patterns. Never returns the ATS vendor's own name --
+ * a smaller employer's unbranded Ashby/Greenhouse/etc board sometimes leaves those exact
+ * fields as literally "Ashby" or "Greenhouse", which would otherwise leak straight through. */
 export function extractCompanyName(doc: ParentNode = document): string | null {
+  const reject = (name: string | null): string | null => (name && !isAtsVendorName(name) ? name : null);
+
   for (const posting of jobPostingsFromJsonLd(doc)) {
     const org = posting.hiringOrganization;
     if (org && typeof org === "object" && typeof (org as { name?: unknown }).name === "string") {
-      const name = (org as { name: string }).name.trim();
+      const name = reject((org as { name: string }).name.trim());
       if (name) return name;
     }
   }
 
   if (doc instanceof Document) {
-    const siteName = doc.querySelector('meta[property="og:site_name"]')?.getAttribute("content")?.trim();
+    const siteName = reject(doc.querySelector('meta[property="og:site_name"]')?.getAttribute("content")?.trim() ?? null);
     if (siteName) return siteName;
 
     const title = doc.title || "";
     const atMatch = /\bat\s+(.+?)(?:\s*[-|].*)?$/i.exec(title);
-    if (atMatch?.[1]) return atMatch[1].trim();
+    const fromTitle = reject(atMatch?.[1]?.trim() ?? null);
+    if (fromTitle) return fromTitle;
   }
 
   return null;

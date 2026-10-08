@@ -1,6 +1,7 @@
 import { matchFieldsHeuristically } from "./heuristics";
 import { matchDropdownOption } from "./dropdownMatch";
-import { isEmpty, setCheckbox, setRadioGroup, setSelectValue, setTextValue } from "./setValue";
+import { dispatchChangeEvents, isEmpty, setCheckbox, setRadioGroup, setSelectValue, setTextValue } from "./setValue";
+import { setDateInputValue, toIsoDateString } from "./dateFormat";
 import type { DetectedField, FieldMatch, ProfileValueMap } from "./types";
 
 export interface FillOutcome {
@@ -52,7 +53,28 @@ export function fillFields(
       continue;
     }
 
-    if (field.kind === "text" || field.kind === "textarea" || field.kind === "date") {
+    if (field.kind === "date") {
+      const element = field.element as HTMLInputElement;
+      // A native date input silently ignores anything that isn't exactly YYYY-MM-DD -- the
+      // stored value (e.g. a start date typed as "15/03/2026") needs converting first, or the
+      // field is left empty with no error even though this looked like a successful fill.
+      const iso = toIsoDateString(value);
+      if (!iso) {
+        outcomes.push({ fieldId: field.id, status: "skipped_low_confidence", profileKey: match.profileKey });
+        continue;
+      }
+      undo.push({ element, kind: "text", previousValue: element.value });
+      const accepted = setDateInputValue(element, iso);
+      if (!accepted) {
+        outcomes.push({ fieldId: field.id, status: "skipped_low_confidence", profileKey: match.profileKey });
+        continue;
+      }
+      dispatchChangeEvents(element);
+      outcomes.push({ fieldId: field.id, status: "filled", profileKey: match.profileKey });
+      continue;
+    }
+
+    if (field.kind === "text" || field.kind === "textarea") {
       const element = field.element as HTMLInputElement | HTMLTextAreaElement;
       undo.push({ element, kind: "text", previousValue: element.value });
       setTextValue(element, value);

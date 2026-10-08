@@ -1,5 +1,6 @@
 import type { SensitiveDefaults } from "../schemas/sensitiveDefaults";
-import { setCheckbox, setRadioGroup, setSelectValue, setTextValue, isEmpty } from "./setValue";
+import { dispatchChangeEvents, setCheckbox, setRadioGroup, setSelectValue, setTextValue, isEmpty } from "./setValue";
+import { setDateInputValue, toIsoDateString } from "./dateFormat";
 import { detectSensitiveCategory, findPreferNotToSayOption } from "./sensitiveFields";
 import type { DetectedField, FieldMatch } from "./types";
 import type { FillOutcome, UndoEntry } from "./fill";
@@ -100,6 +101,23 @@ export function applySensitiveDefaults(fields: DetectedField[], defaults: Sensit
     } else if (field.kind === "checkbox") {
       undo.push({ element: field.element, kind: "checkbox", previousValue: "", previousChecked: (field.element as HTMLInputElement).checked });
       setCheckbox(field.element as HTMLInputElement, /^(yes|true|1)$/i.test(value));
+      outcomes.push({ fieldId: field.id, status: "filled" });
+    } else if (field.kind === "date") {
+      // A date of birth (or any other sensitive date) saved as free text -- e.g. "15/03/1990" --
+      // needs converting to YYYY-MM-DD, or the native date input silently stays empty.
+      const element = field.element as HTMLInputElement;
+      const iso = toIsoDateString(value);
+      if (!iso) {
+        outcomes.push({ fieldId: field.id, status: "skipped_low_confidence" });
+        continue;
+      }
+      undo.push({ element, kind: "text", previousValue: element.value });
+      const accepted = setDateInputValue(element, iso);
+      if (!accepted) {
+        outcomes.push({ fieldId: field.id, status: "skipped_low_confidence" });
+        continue;
+      }
+      dispatchChangeEvents(element);
       outcomes.push({ fieldId: field.id, status: "filled" });
     } else {
       const element = field.element as HTMLInputElement | HTMLTextAreaElement;
