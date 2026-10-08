@@ -4,6 +4,7 @@ import { useActiveTabMessage } from "../../src/ui/useActiveTabMessaging";
 import { EnableSiteForm } from "../../src/ui/EnableSiteForm";
 import { FieldList } from "./FieldList";
 import { AnswerDraftPanel } from "./AnswerDraftPanel";
+import { CoverLetterPanel } from "./CoverLetterPanel";
 import { ThemeToggle } from "../../src/ui/ThemeToggle";
 
 export default function App() {
@@ -40,6 +41,15 @@ export default function App() {
     if (!result?.ok) setError(result?.error ?? "Could not draft a different answer.");
   }
 
+  async function setOverride(fieldId: string, profileKey: string) {
+    const result = await sendToTab<{ ok: boolean; error?: string }>({ type: "set-field-override", payload: { fieldId, profileKey } });
+    if (!result?.ok) {
+      setError(result?.error ?? "Could not save that mapping.");
+      return;
+    }
+    await detect();
+  }
+
   const filledCount = status?.fields.filter((field) => field.status === "filled" || field.status === "filled_ai_draft").length ?? 0;
 
   return (
@@ -72,7 +82,7 @@ export default function App() {
         <div className="space-y-4">
           <div className="flex flex-wrap gap-2">
             <button type="button" disabled={busy} onClick={() => void detect()} className="rounded-md border border-line bg-card px-3 py-2 text-sm disabled:opacity-50">
-              Detect fields
+              Preview fill
             </button>
             <button type="button" disabled={busy} onClick={() => void fill()} className="rounded-md bg-moss px-3 py-2 text-sm text-white disabled:opacity-50">
               Fill
@@ -87,16 +97,18 @@ export default function App() {
           {status ? (
             <>
               <p className="text-sm text-muted">
-                {filledCount} of {status.totalFields} fields filled. Review everything before you submit — Jobsmith never
-                clicks Submit or Next for you.
+                {status.preview
+                  ? `${filledCount} of ${status.totalFields} fields would be filled. Click a field below to see why, or the value it would get. Nothing on the page has changed yet.`
+                  : `${filledCount} of ${status.totalFields} fields filled. Review everything before you submit — Jobsmith never clicks Submit or Next for you.`}
               </p>
-              <FieldList fields={status.fields} onReplace={replace} />
+              <FieldList fields={status.fields} onReplace={replace} onSetOverride={setOverride} />
             </>
           ) : null}
         </div>
       )}
 
       <AnswerDraftPanel />
+      <CoverLetterPanel />
 
       <div className="border-t border-line pt-4">
         <h2 className="font-serif text-lg">Not on the list?</h2>

@@ -16,6 +16,7 @@ export const LOCAL_KEYS = {
   preferences: "preferences",
   settings: "settings",
   sensitiveDefaults: "sensitiveDefaults",
+  fieldOverrides: "fieldOverrides",
 } as const;
 
 export function createMemoryArea(initial: Record<string, unknown> = {}): KeyValueArea & {

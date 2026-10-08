@@ -8,11 +8,19 @@ import { blobToBase64 } from "../src/storage/bytes";
 import { mapFieldsRequestSchema } from "../src/messaging/mapFieldsTypes";
 import { testConnectionRequestSchema, testConnectionResultSchema } from "../src/messaging/types";
 import { draftFieldAnswerRequestSchema } from "../src/messaging/draftFieldTypes";
+import {
+  deleteApplicationRequestSchema,
+  listApplicationsRequestSchema,
+  updateApplicationStatusRequestSchema,
+  upsertApplicationRequestSchema,
+} from "../src/messaging/applicationTypes";
 import { createDefaultSettings, settingsSchema } from "../src/schemas/settings";
 import { createEmptyProfile, profileSchema } from "../src/schemas/profile";
 import { chromeLocalArea, LOCAL_KEYS } from "../src/storage/localStore";
 import { db } from "../src/storage/db";
 import { handleDraftAnswersRequest } from "../src/llm/prompts/handleDraftAnswers";
+import { handleDraftCoverLetterRequest } from "../src/llm/prompts/handleDraftCoverLetter";
+import { draftCoverLetterRequestSchema } from "../src/messaging/coverLetterTypes";
 import { draftAnswerVariants } from "../src/llm/prompts/draftAnswer";
 import { getCompanyBrief } from "../src/company/companyBrief";
 import { defineBackground } from "wxt/utils/define-background";
@@ -142,6 +150,75 @@ export default defineBackground(() => {
           sendResponse({ ok: false, error: error instanceof Error ? error.message : "Could not draft an answer for this field." });
         }
       })();
+      return true;
+    }
+
+    const draftCoverLetterReq = draftCoverLetterRequestSchema.safeParse(message);
+    if (draftCoverLetterReq.success) {
+      void handleDraftCoverLetterRequest(draftCoverLetterReq.data.payload).then(sendResponse);
+      return true;
+    }
+
+    const upsertApplication = upsertApplicationRequestSchema.safeParse(message);
+    if (upsertApplication.success) {
+      void (async () => {
+        const { url, company, role, status } = upsertApplication.data.payload;
+        const now = new Date().toISOString();
+        const existing = await db.applications.filter((application) => application.url === url).first();
+        if (existing) {
+          await db.applications.update(existing.id, {
+            company: company || existing.company,
+            role: role || existing.role,
+            status,
+            date: now,
+          });
+        } else {
+          await db.applications.add({
+            id: crypto.randomUUID(),
+            schemaVersion: 1,
+            url,
+            company,
+            role,
+            date: now,
+            answerIds: [],
+            status,
+          });
+        }
+        sendResponse({ ok: true });
+      })();
+      return true;
+    }
+
+    const listApplications = listApplicationsRequestSchema.safeParse(message);
+    if (listApplications.success) {
+      void db.applications
+        .toArray()
+        .then((applications) => applications.sort((a, b) => b.date.localeCompare(a.date)))
+        .then((applications) =>
+          applications.map((application) => ({
+            id: application.id,
+            url: application.url,
+            company: application.company,
+            role: application.role,
+            date: application.date,
+            status: application.status,
+          })),
+        )
+        .then(sendResponse);
+      return true;
+    }
+
+    const updateApplicationStatus = updateApplicationStatusRequestSchema.safeParse(message);
+    if (updateApplicationStatus.success) {
+      void db.applications
+        .update(updateApplicationStatus.data.payload.id, { status: updateApplicationStatus.data.payload.status })
+        .then(() => sendResponse({ ok: true }));
+      return true;
+    }
+
+    const deleteApplication = deleteApplicationRequestSchema.safeParse(message);
+    if (deleteApplication.success) {
+      void db.applications.delete(deleteApplication.data.payload.id).then(() => sendResponse({ ok: true }));
       return true;
     }
 

@@ -16,8 +16,10 @@ export interface SensitiveSplit {
 /**
  * Applies each sensitive category's saved default and returns the fields that must not go through
  * the normal profile-value fill path, so a sensitive value is never matched or filled like any other field.
+ * When `dryRun` is true, computes the exact same decisions but never writes to the DOM -- used so a
+ * preview can show what *would* happen without actually filling a sensitive field.
  */
-export function applySensitiveDefaults(fields: DetectedField[], defaults: SensitiveDefaults): SensitiveSplit {
+export function applySensitiveDefaults(fields: DetectedField[], defaults: SensitiveDefaults, dryRun = false): SensitiveSplit {
   const excludedFieldIds = new Set<string>();
   const outcomes: FillOutcome[] = [];
   const undo: UndoEntry[] = [];
@@ -44,26 +46,29 @@ export function applySensitiveDefaults(fields: DetectedField[], defaults: Sensit
         outcomes.push({ fieldId: field.id, status: "skipped_sensitive" });
         continue;
       }
-      if (field.kind === "select") {
-        undo.push({ element: field.element, kind: "select", previousValue: (field.element as HTMLSelectElement).value });
-        setSelectValue(field.element as HTMLSelectElement, optionValue);
-      } else if (field.kind === "radio" && field.groupElements) {
-        const groupElements = field.groupElements;
-        const firstGroupElement = groupElements[0];
-        if (!firstGroupElement) {
-          outcomes.push({ fieldId: field.id, status: "skipped_sensitive" });
-          continue;
+      const option = field.options.find((candidate) => candidate.value === optionValue);
+      if (!dryRun) {
+        if (field.kind === "select") {
+          undo.push({ element: field.element, kind: "select", previousValue: (field.element as HTMLSelectElement).value });
+          setSelectValue(field.element as HTMLSelectElement, optionValue);
+        } else if (field.kind === "radio" && field.groupElements) {
+          const groupElements = field.groupElements;
+          const firstGroupElement = groupElements[0];
+          if (!firstGroupElement) {
+            outcomes.push({ fieldId: field.id, status: "skipped_sensitive" });
+            continue;
+          }
+          undo.push({
+            element: firstGroupElement,
+            kind: "radio",
+            previousValue: "",
+            groupElements,
+            previousGroupChecked: groupElements.map((element) => (element as HTMLInputElement).checked),
+          });
+          setRadioGroup(groupElements as HTMLInputElement[], optionValue);
         }
-        undo.push({
-          element: firstGroupElement,
-          kind: "radio",
-          previousValue: "",
-          groupElements,
-          previousGroupChecked: groupElements.map((element) => (element as HTMLInputElement).checked),
-        });
-        setRadioGroup(groupElements as HTMLInputElement[], optionValue);
       }
-      outcomes.push({ fieldId: field.id, status: "filled" });
+      outcomes.push({ fieldId: field.id, status: "filled", previewValue: option?.label ?? optionValue });
       continue;
     }
 
@@ -80,9 +85,11 @@ export function applySensitiveDefaults(fields: DetectedField[], defaults: Sensit
       // Indian", or why a saved age of "25" never matched an "Age group" select offering "25-34".
       const matched = resolveDropdownOption(value, field.options);
       if (matched.option) {
-        undo.push({ element: field.element, kind: "select", previousValue: (field.element as HTMLSelectElement).value });
-        setSelectValue(field.element as HTMLSelectElement, matched.option.value);
-        outcomes.push({ fieldId: field.id, status: "filled" });
+        if (!dryRun) {
+          undo.push({ element: field.element, kind: "select", previousValue: (field.element as HTMLSelectElement).value });
+          setSelectValue(field.element as HTMLSelectElement, matched.option.value);
+        }
+        outcomes.push({ fieldId: field.id, status: "filled", previewValue: matched.option.label });
       } else {
         outcomes.push({ fieldId: field.id, status: "skipped_low_confidence" });
       }
@@ -91,31 +98,40 @@ export function applySensitiveDefaults(fields: DetectedField[], defaults: Sensit
       const groupElements = field.groupElements;
       const firstGroupElement = groupElements[0];
       if (matched.option && firstGroupElement) {
-        undo.push({
-          element: firstGroupElement,
-          kind: "radio",
-          previousValue: "",
-          groupElements,
-          previousGroupChecked: groupElements.map((element) => (element as HTMLInputElement).checked),
-        });
-        setRadioGroup(groupElements as HTMLInputElement[], matched.option.value);
-        outcomes.push({ fieldId: field.id, status: "filled" });
+        if (!dryRun) {
+          undo.push({
+            element: firstGroupElement,
+            kind: "radio",
+            previousValue: "",
+            groupElements,
+            previousGroupChecked: groupElements.map((element) => (element as HTMLInputElement).checked),
+          });
+          setRadioGroup(groupElements as HTMLInputElement[], matched.option.value);
+        }
+        outcomes.push({ fieldId: field.id, status: "filled", previewValue: matched.option.label });
       } else {
         outcomes.push({ fieldId: field.id, status: "skipped_low_confidence" });
       }
     } else if (field.kind === "checkbox") {
-      undo.push({ element: field.element, kind: "checkbox", previousValue: "", previousChecked: (field.element as HTMLInputElement).checked });
-      setCheckbox(field.element as HTMLInputElement, /^(yes|true|1)$/i.test(value));
-      outcomes.push({ fieldId: field.id, status: "filled" });
+      const checked = /^(yes|true|1)$/i.test(value);
+      if (!dryRun) {
+        undo.push({ element: field.element, kind: "checkbox", previousValue: "", previousChecked: (field.element as HTMLInputElement).checked });
+        setCheckbox(field.element as HTMLInputElement, checked);
+      }
+      outcomes.push({ fieldId: field.id, status: "filled", previewValue: checked ? "Checked" : "Unchecked" });
     } else if (field.kind === "date") {
       // A date of birth (or any other sensitive date) saved as free text -- e.g. "15/03/1990" --
       // needs converting to YYYY-MM-DD, or the native date input silently stays empty.
-      const element = field.element as HTMLInputElement;
       const iso = toIsoDateString(value);
       if (!iso) {
         outcomes.push({ fieldId: field.id, status: "skipped_low_confidence" });
         continue;
       }
+      if (dryRun) {
+        outcomes.push({ fieldId: field.id, status: "filled", previewValue: iso });
+        continue;
+      }
+      const element = field.element as HTMLInputElement;
       undo.push({ element, kind: "text", previousValue: element.value });
       const accepted = setDateInputValue(element, iso);
       if (!accepted) {
@@ -123,12 +139,14 @@ export function applySensitiveDefaults(fields: DetectedField[], defaults: Sensit
         continue;
       }
       dispatchChangeEvents(element);
-      outcomes.push({ fieldId: field.id, status: "filled" });
+      outcomes.push({ fieldId: field.id, status: "filled", previewValue: iso });
     } else {
-      const element = field.element as HTMLInputElement | HTMLTextAreaElement;
-      undo.push({ element, kind: "text", previousValue: element.value });
-      setTextValue(element, value);
-      outcomes.push({ fieldId: field.id, status: "filled" });
+      if (!dryRun) {
+        const element = field.element as HTMLInputElement | HTMLTextAreaElement;
+        undo.push({ element, kind: "text", previousValue: element.value });
+        setTextValue(element, value);
+      }
+      outcomes.push({ fieldId: field.id, status: "filled", previewValue: value });
     }
   }
 

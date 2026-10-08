@@ -3,13 +3,13 @@ import { detectFields } from "../../src/autofill/detect";
 import { fillFields, undoFill, type UndoEntry } from "../../src/autofill/fill";
 import { isCapturable, isLongTextField } from "../../src/autofill/formBounds";
 import { matchFieldsHeuristically } from "../../src/autofill/heuristics";
-import { detectSensitiveCategory } from "../../src/autofill/sensitiveFields";
 import { flattenProfileValues } from "../../src/autofill/profileValues";
 import { showSaveAnswerBanner } from "../../src/autofill/saveAnswerBanner";
 import { saveAnswerRequestSchema } from "../../src/messaging/answerBankTypes";
 import type { FieldSummary, FillStatus } from "../../src/messaging/fillTypes";
 import { applySensitiveDefaults, removeSensitiveMatches } from "../../src/autofill/applySensitiveDefaults";
 import { applyRightToWork } from "../../src/autofill/rightToWork";
+import { explainOutcome } from "../../src/autofill/explainOutcome";
 import { decryptSensitiveDefaultsForFill } from "../../src/autofill/decryptSensitiveDefaults";
 import { createEmptyPreferences, preferencesSchema } from "../../src/schemas/preferences";
 import { createEmptyProfile, profileSchema } from "../../src/schemas/profile";
@@ -22,11 +22,16 @@ import { isAutomationBlocked } from "../../src/sites/access";
 import { getAnswerBankRequestSchema, type AnswerBankEntrySummary } from "../../src/messaging/answerBankTypes";
 import { fieldsForMapping } from "../../src/llm/prompts/mapFields";
 import { mapFieldsRequestSchema, mapFieldsResultSchema } from "../../src/messaging/mapFieldsTypes";
-import { chromeLocalArea, LOCAL_KEYS } from "../../src/storage/localStore";
+import { chromeLocalArea, LOCAL_KEYS, loadStored, saveStored } from "../../src/storage/localStore";
+import { createEmptyFieldOverrides, fieldOverridesSchema } from "../../src/schemas/fieldOverrides";
+import { fieldOverridesMigrations } from "../../src/schemas/migrateEntities";
+import { matchesFromOverrides, overrideKey } from "../../src/autofill/fieldOverrides";
+import { setFieldOverrideRequestSchema } from "../../src/messaging/fieldOverrideTypes";
 import { fillAriaComboboxes, fillWorkdayDateGroups, type WidgetOutcome } from "../../src/autofill/workdayWidgets";
 import type { DetectedField, FieldMatch, ProfileValueMap } from "../../src/autofill/types";
 import type { FillOutcome, UndoEntry as UndoEntryType } from "../../src/autofill/fill";
-import { extractJobDescription } from "../../src/jd/extractJobDescription";
+import { extractJobDescription, extractJobTitle } from "../../src/jd/extractJobDescription";
+import { upsertApplicationRequestSchema } from "../../src/messaging/applicationTypes";
 import {
   draftFieldAnswerRequestSchema,
   draftFieldAnswerResultSchema,
@@ -297,44 +302,60 @@ export default defineContentScript({
       };
     }
 
+    async function loadFieldOverrides() {
+      const result = await loadStored(
+        chromeLocalArea,
+        LOCAL_KEYS.fieldOverrides,
+        fieldOverridesSchema,
+        fieldOverridesMigrations,
+        createEmptyFieldOverrides(),
+      );
+      return result.ok ? result.value : createEmptyFieldOverrides();
+    }
+
+    /**
+     * A genuine preview: every layer below is called with `dryRun: true`, so nothing on the page
+     * is ever written to by "Detect fields" -- only "Fill" (the real `run-fill` handler) does that.
+     * Each field's summary includes `previewValue` (what Fill would set it to) and `detail` (why,
+     * for anything that wouldn't be filled), so you can see exactly what Fill will do beforehand.
+     */
     async function buildStatus(): Promise<FillStatus> {
       if (isAutomationBlocked(window.location.href)) {
         return { blocked: true, blockedReason: "Jobsmith does not run on this site.", totalFields: 0, fields: [] };
       }
       const fields = detectFields(document);
       const { profile, preferences, sensitiveDefaults } = await loadProfileAndPreferences();
-      const sensitiveFieldIds = new Set(fields.filter((field) => Boolean(detectSensitiveCategory(field))).map((field) => field.id));
-      const rightToWorkFieldIds = new Set(
-        fields.filter((field) => (field.kind === "select" || field.kind === "radio") && /right to work/i.test(field.label)).map((field) => field.id),
-      );
-      const { matches, unmatched } = matchFieldsHeuristically(
-        fields.filter((field) => !sensitiveFieldIds.has(field.id) && !rightToWorkFieldIds.has(field.id)),
-      );
+      const decryptedSensitiveDefaults = await decryptSensitiveDefaultsForFill(sensitiveDefaults);
+      const fieldOverrides = await loadFieldOverrides();
+
+      const sensitiveResult = applySensitiveDefaults(fields, decryptedSensitiveDefaults, true);
+      const rightToWorkResult = applyRightToWork(fields, preferences.rightToWork, true);
+      const overrideResult = matchesFromOverrides(fields, fieldOverrides.overrides, window.location.hostname);
+      const excludedFieldIds = new Set([
+        ...sensitiveResult.excludedFieldIds,
+        ...rightToWorkResult.excludedFieldIds,
+        ...overrideResult.excludedFieldIds,
+      ]);
+      const { matches, unmatched } = matchFieldsHeuristically(fields.filter((field) => !excludedFieldIds.has(field.id)));
       const values = flattenProfileValues(profile, preferences);
-      const { outcomes } = fillFields(fields, matches, values);
+      const safeMatches = [...removeSensitiveMatches(matches, excludedFieldIds), ...overrideResult.matches];
+      const { outcomes } = fillFields(fields, safeMatches, values, undefined, { dryRun: true });
 
       const byId = new Map(fields.map((field) => [field.id, field]));
-      const summaries: FieldSummary[] = outcomes.map((outcome) => ({
+      const toSummary = (outcome: FillOutcome): FieldSummary => ({
         id: outcome.fieldId,
         label: byId.get(outcome.fieldId)?.label ?? "",
         kind: byId.get(outcome.fieldId)?.kind ?? "text",
         status: outcome.status,
-      }));
+        detail: explainOutcome(outcome.status, outcome.profileKey),
+        previewValue: outcome.previewValue,
+      });
+      const summaries: FieldSummary[] = [...outcomes, ...sensitiveResult.outcomes, ...rightToWorkResult.outcomes].map(toSummary);
       for (const field of unmatched) {
-        summaries.push({ id: field.id, label: field.label, kind: field.kind, status: "unmatched" });
+        summaries.push({ id: field.id, label: field.label, kind: field.kind, status: "unmatched", detail: explainOutcome("unmatched") });
       }
-      for (const fieldId of sensitiveFieldIds) {
-        const field = byId.get(fieldId);
-        if (field) summaries.push({ id: field.id, label: field.label, kind: field.kind, status: "skipped_sensitive" });
-      }
-      for (const fieldId of rightToWorkFieldIds) {
-        const field = byId.get(fieldId);
-        if (field) summaries.push({ id: field.id, label: field.label, kind: field.kind, status: "unmatched" });
-      }
-      void sensitiveDefaults; // Detection-only pass does not write sensitive values; see "run-fill" below.
 
-      // This pass was read-only (fillFields only mutates on the real "run-fill" call below).
-      return { blocked: false, blockedReason: "", totalFields: fields.length, fields: summaries };
+      return { blocked: false, blockedReason: "", totalFields: fields.length, fields: summaries, preview: true };
     }
 
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -353,15 +374,21 @@ export default defineContentScript({
           const fields = detectFields(document);
           const { profile, preferences, sensitiveDefaults } = await loadProfileAndPreferences();
           const decryptedSensitiveDefaults = await decryptSensitiveDefaultsForFill(sensitiveDefaults);
+          const fieldOverrides = await loadFieldOverrides();
 
           const sensitiveResult = applySensitiveDefaults(fields, decryptedSensitiveDefaults);
           const rightToWorkResult = applyRightToWork(fields, preferences.rightToWork);
-          const excludedFieldIds = new Set([...sensitiveResult.excludedFieldIds, ...rightToWorkResult.excludedFieldIds]);
+          const overrideResult = matchesFromOverrides(fields, fieldOverrides.overrides, window.location.hostname);
+          const excludedFieldIds = new Set([
+            ...sensitiveResult.excludedFieldIds,
+            ...rightToWorkResult.excludedFieldIds,
+            ...overrideResult.excludedFieldIds,
+          ]);
           const { matches, unmatched } = matchFieldsHeuristically(
             fields.filter((field) => !excludedFieldIds.has(field.id)),
           );
           const values = flattenProfileValues(profile, preferences);
-          const safeMatches = removeSensitiveMatches(matches, excludedFieldIds);
+          const safeMatches = [...removeSensitiveMatches(matches, excludedFieldIds), ...overrideResult.matches];
           const { outcomes, undo } = fillFields(fields, safeMatches, values);
 
           const bank = await fetchAnswerBank();
@@ -371,13 +398,19 @@ export default defineContentScript({
           const fileOutcomes = await attachStoredCvToFileInputs(fields);
           const fromAiDraft = await fillFromAiDraft(fromMapping.stillUnmatched);
 
-          // Workday (and anything else using the same ARIA pattern) renders most pickers as custom
-          // widgets rather than native <select>/<input type="date">, so they never show up in `fields`
-          // at all; this runs as a separate pass over the live DOM instead of through fillFields.
-          const widgetOutcomes: WidgetOutcome[] =
-            adapterForHostname(window.location.hostname).id === "workday"
-              ? [...(await fillAriaComboboxes(document, values)), ...fillWorkdayDateGroups(document, values)]
-              : [];
+          // Workday renders most pickers as custom widgets rather than native <select>/<input
+          // type="date">, so they never show up in `fields` at all -- this runs as a separate pass
+          // over the live DOM instead of through fillFields. The ARIA-combobox pattern itself
+          // (role="combobox"/aria-haspopup="listbox") isn't Workday-specific -- Ashby, SmartRecruiters,
+          // and plenty of other sites use the same react-select/downshift-style custom dropdown -- so
+          // that half of the pass runs everywhere; it's a no-op wherever the pattern doesn't exist,
+          // and (like every other dropdown match) only ever fills on a confident match. The three-input
+          // Month/Day/Year date-group pattern is Workday-specific, so that stays gated to Workday.
+          const currentAdapterId = adapterForHostname(window.location.hostname).id;
+          const widgetOutcomes: WidgetOutcome[] = [
+            ...(await fillAriaComboboxes(document, values)),
+            ...(currentAdapterId === "workday" ? fillWorkdayDateGroups(document, values) : []),
+          ];
 
           lastUndo = [...undo, ...fromBank.undo, ...fromMapping.undo, ...sensitiveResult.undo, ...rightToWorkResult.undo, ...fromAiDraft.undo];
           const allOutcomes = [
@@ -396,21 +429,39 @@ export default defineContentScript({
             label: byId.get(outcome.fieldId)?.label ?? "",
             kind: byId.get(outcome.fieldId)?.kind ?? "text",
             status: outcome.status,
+            detail: explainOutcome(outcome.status, "profileKey" in outcome ? outcome.profileKey : undefined),
+            previewValue: "previewValue" in outcome ? outcome.previewValue : undefined,
           }));
           for (const field of fromAiDraft.stillUnmatched) {
-            summaries.push({ id: field.id, label: field.label, kind: field.kind, status: "unmatched" });
+            summaries.push({ id: field.id, label: field.label, kind: field.kind, status: "unmatched", detail: explainOutcome("unmatched") });
           }
           widgetOutcomes.forEach((widget, index) => {
-            summaries.push({
-              id: `workday-widget-${index}`,
-              label: widget.label,
-              kind: "select",
-              status: widget.status === "filled" || widget.status === "skipped_not_empty" || widget.status === "skipped_sensitive"
+            const status: FieldSummary["status"] =
+              widget.status === "filled" || widget.status === "skipped_not_empty" || widget.status === "skipped_sensitive"
                 ? widget.status
-                : "unmatched",
-            });
+                : "unmatched";
+            summaries.push({ id: `workday-widget-${index}`, label: widget.label, kind: "select", status, detail: explainOutcome(status) });
           });
-          sendResponse({ blocked: false, blockedReason: "", totalFields: fields.length + widgetOutcomes.length, fields: summaries });
+          sendResponse({ blocked: false, blockedReason: "", totalFields: fields.length + widgetOutcomes.length, fields: summaries, preview: false });
+
+          // Fire-and-forget: logs this fill in the local Applications tracker (Options -> Applications)
+          // so you have a record of what you applied to and when, without blocking the fill response on it.
+          const jdForTracker = extractJobDescription(document);
+          void chrome.runtime
+            .sendMessage(
+              upsertApplicationRequestSchema.parse({
+                type: "upsert-application",
+                payload: {
+                  url: window.location.href,
+                  company: jdForTracker.companyName ?? "",
+                  role: extractJobTitle(document) ?? "",
+                  status: "filled",
+                },
+              }),
+            )
+            .catch(() => {
+              // Options -> Applications just won't show this one; the actual fill above already succeeded.
+            });
         })();
         return true;
       }
@@ -418,6 +469,38 @@ export default defineContentScript({
         undoFill(lastUndo);
         lastUndo = [];
         sendResponse({ ok: true });
+        return true;
+      }
+      if (message?.type === "set-field-override") {
+        void (async () => {
+          const parsed = setFieldOverrideRequestSchema.safeParse(message);
+          if (!parsed.success) {
+            sendResponse({ ok: false, error: "Invalid request." });
+            return;
+          }
+          const { fieldId, profileKey } = parsed.data.payload;
+          const fields = detectFields(document);
+          const field = fields.find((candidate) => candidate.id === fieldId);
+          if (!field) {
+            sendResponse({ ok: false, error: "That field could not be found on the page anymore. Try detecting fields again." });
+            return;
+          }
+
+          const stored = await loadStored(
+            chromeLocalArea,
+            LOCAL_KEYS.fieldOverrides,
+            fieldOverridesSchema,
+            fieldOverridesMigrations,
+            createEmptyFieldOverrides(),
+          );
+          const current = stored.ok ? stored.value : createEmptyFieldOverrides();
+          const key = overrideKey(window.location.hostname, field);
+          const overrides = { ...current.overrides };
+          if (profileKey) overrides[key] = profileKey;
+          else delete overrides[key];
+          await saveStored(chromeLocalArea, LOCAL_KEYS.fieldOverrides, fieldOverridesSchema, { ...current, overrides });
+          sendResponse({ ok: true });
+        })();
         return true;
       }
       if (message?.type === "replace-field-answer") {
@@ -477,6 +560,12 @@ export default defineContentScript({
       if (message?.type === "get-job-description") {
         import("../../src/jd/extractJobDescription").then(({ extractJobDescription }) => {
           sendResponse(extractJobDescription(document));
+        });
+        return true;
+      }
+      if (message?.type === "get-job-title") {
+        import("../../src/jd/extractJobDescription").then(({ extractJobTitle }) => {
+          sendResponse({ title: extractJobTitle(document) });
         });
         return true;
       }

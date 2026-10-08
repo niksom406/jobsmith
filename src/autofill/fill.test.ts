@@ -20,6 +20,16 @@ test("fills a bucketed salary-expectation select from a plain saved number", () 
   expect((document.getElementById("salary") as HTMLSelectElement).value).toBe("a");
 });
 
+test("a dry run reports what would be filled without touching the DOM", () => {
+  document.body.innerHTML = `<label for="email">Email</label><input id="email">`;
+  const fields = detectFields(document);
+  const { matches } = matchFieldsHeuristically(fields);
+  const { outcomes } = fillFields(fields, matches, { email: "ada@example.com" }, undefined, { dryRun: true });
+  expect(outcomes[0]?.status).toBe("filled");
+  expect(outcomes[0]?.previewValue).toBe("ada@example.com");
+  expect((document.getElementById("email") as HTMLInputElement).value).toBe("");
+});
+
 test("does not guess a salary bucket when the number falls outside every range", () => {
   document.body.innerHTML = `
     <label for="salary">Salary expectation</label>

@@ -13,6 +13,10 @@ export const fieldSummarySchema = z.strictObject({
     "skipped_sensitive",
     "unmatched",
   ]),
+  /** Why this status, in plain language -- shown when you click the field in the side panel. */
+  detail: z.string().optional(),
+  /** A readable preview of the value that was (or, during a dry-run preview, would be) set. */
+  previewValue: z.string().optional(),
 });
 
 export const fillStatusSchema = z.strictObject({
@@ -20,6 +24,9 @@ export const fillStatusSchema = z.strictObject({
   blockedReason: z.string(),
   totalFields: z.number(),
   fields: z.array(fieldSummarySchema),
+  /** True when nothing on the page was actually written to -- "Detect fields" previews what Fill
+   * would do; only "Fill" itself sets this false. */
+  preview: z.boolean().optional(),
 });
 
 export type FieldSummary = z.infer<typeof fieldSummarySchema>;

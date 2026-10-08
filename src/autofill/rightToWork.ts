@@ -67,9 +67,10 @@ export interface RightToWorkResult {
 /**
  * Fills "right to work in <country>?" style select/radio questions from Preferences -> Right to
  * work -- a question type that flattenProfileValues() can't answer on its own, since the answer
- * depends on which specific country the question names, not a single flat profile value.
+ * depends on which specific country the question names, not a single flat profile value. When
+ * `dryRun` is true, computes the same decision but never writes to the DOM.
  */
-export function applyRightToWork(fields: DetectedField[], rightToWork: Preferences["rightToWork"]): RightToWorkResult {
+export function applyRightToWork(fields: DetectedField[], rightToWork: Preferences["rightToWork"], dryRun = false): RightToWorkResult {
   const excludedFieldIds = new Set<string>();
   const outcomes: FillOutcome[] = [];
   const undo: UndoEntry[] = [];
@@ -96,26 +97,28 @@ export function applyRightToWork(fields: DetectedField[], rightToWork: Preferenc
       continue;
     }
 
-    if (field.kind === "select") {
-      undo.push({ element: field.element, kind: "select", previousValue: (field.element as HTMLSelectElement).value });
-      setSelectValue(field.element as HTMLSelectElement, matched.option.value);
-    } else {
-      const groupElements = field.groupElements;
-      const firstGroupElement = groupElements?.[0];
-      if (!groupElements || !firstGroupElement) {
-        outcomes.push({ fieldId: field.id, status: "skipped_low_confidence" });
-        continue;
+    if (!dryRun) {
+      if (field.kind === "select") {
+        undo.push({ element: field.element, kind: "select", previousValue: (field.element as HTMLSelectElement).value });
+        setSelectValue(field.element as HTMLSelectElement, matched.option.value);
+      } else {
+        const groupElements = field.groupElements;
+        const firstGroupElement = groupElements?.[0];
+        if (!groupElements || !firstGroupElement) {
+          outcomes.push({ fieldId: field.id, status: "skipped_low_confidence" });
+          continue;
+        }
+        undo.push({
+          element: firstGroupElement,
+          kind: "radio",
+          previousValue: "",
+          groupElements,
+          previousGroupChecked: groupElements.map((element) => (element as HTMLInputElement).checked),
+        });
+        setRadioGroup(groupElements as HTMLInputElement[], matched.option.value);
       }
-      undo.push({
-        element: firstGroupElement,
-        kind: "radio",
-        previousValue: "",
-        groupElements,
-        previousGroupChecked: groupElements.map((element) => (element as HTMLInputElement).checked),
-      });
-      setRadioGroup(groupElements as HTMLInputElement[], matched.option.value);
     }
-    outcomes.push({ fieldId: field.id, status: "filled" });
+    outcomes.push({ fieldId: field.id, status: "filled", previewValue: matched.option.label });
   }
 
   return { excludedFieldIds, outcomes, undo };

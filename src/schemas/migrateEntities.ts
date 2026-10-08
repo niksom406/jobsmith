@@ -1,3 +1,4 @@
+import { createEmptyFieldOverrides } from "./fieldOverrides";
 import { createEmptyPreferences } from "./preferences";
 import { createEmptyProfile } from "./profile";
 import { createEmptySensitiveDefaults, sensitiveCategoryIds, SENSITIVE_DEFAULTS_VERSION } from "./sensitiveDefaults";
@@ -43,4 +44,8 @@ function addEncryptedFlag(value: unknown): unknown {
 export const sensitiveDefaultsMigrations: Record<number, Migration> = {
   0: stampVersion(createEmptySensitiveDefaults()),
   1: addEncryptedFlag,
+};
+
+export const fieldOverridesMigrations: Record<number, Migration> = {
+  0: stampVersion(createEmptyFieldOverrides()),
 };

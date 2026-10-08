@@ -1,3 +1,4 @@
+import { isLongTextField } from "./formBounds";
 import type { DetectedField, FieldMatch } from "./types";
 
 /** Synonym lists per profile key. Matched against autocomplete, name/id, and label text. */
@@ -103,6 +104,15 @@ export function matchFieldHeuristically(field: DetectedField): FieldMatch | null
       }
     }
   }
+  // A long-text box (a <textarea>, or a text input with a generous/no maxlength) is almost always
+  // an open-ended essay question, not a short structured field -- so a question like "What relevant
+  // experience/skills will you bring?" must not get hijacked by the "skills" synonym just because
+  // the word appears somewhere in it. Alias/substring matching stays Layer-1-only for genuinely
+  // short fields; an unmatched long-text field falls through to the answer bank, then the
+  // AI-drafted-answer layer, which actually reads the whole question instead of pattern-matching
+  // one word in it.
+  if (isLongTextField(field.element)) return null;
+
   const aliasMatch = bestAliasMatch(haystacks, Object.entries(SYNONYMS));
   if (aliasMatch) return { fieldId: field.id, profileKey: aliasMatch, confidence: "alias" };
   return null;

@@ -12,6 +12,7 @@ import {
   AboutSection,
   AiSection,
   AnswerBankSection,
+  ApplicationsSection,
   DataSection,
   DocumentsSection,
   InvalidRecord,
@@ -26,6 +27,7 @@ const NAV = [
   ["preferences", "Preferences"],
   ["documents", "Documents"],
   ["answers", "Answer bank"],
+  ["applications", "Applications"],
   ["sensitive", "Sensitive fields"],
   ["sites", "Sites"],
   ["ai", "AI"],
@@ -119,6 +121,7 @@ export default function App() {
         ) : null}
         {section === "documents" ? <DocumentsSection /> : null}
         {section === "answers" ? <AnswerBankSection /> : null}
+        {section === "applications" ? <ApplicationsSection /> : null}
         {bundle && section === "sensitive" ? (
           bundle.sensitiveDefaults.ok ? (
             <SensitiveSection defaults={bundle.sensitiveDefaults.value} onSave={saveSensitive} />

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ZodError } from "zod";
 import { answerBankSchema, type AnswerBankEntry } from "../../src/schemas/answerBank";
+import type { ApplicationRecord } from "../../src/schemas/applications";
 import type { DocumentRecord } from "../../src/schemas/documents";
 import {
   sensitiveCategoryIds,
@@ -118,6 +119,80 @@ export function DocumentsSection() {
       ) : null}
       {rows?.map((row) => (
         <DocumentRow key={row.id} row={row} onDeleted={reload} />
+      ))}
+    </div>
+  );
+}
+
+const APPLICATION_STATUS_LABELS: Record<string, string> = {
+  draft: "Draft",
+  filled: "Filled",
+  submitted_by_user: "Submitted",
+  abandoned: "Abandoned",
+};
+
+export function ApplicationsSection() {
+  const [rows, setRows] = useState<ApplicationRecord[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function reload() {
+    const entries = await db.applications.toArray();
+    setRows(entries.sort((a, b) => b.date.localeCompare(a.date)));
+  }
+
+  useEffect(() => {
+    void reload();
+  }, []);
+
+  return (
+    <div className="space-y-4">
+      <header>
+        <h2 className="font-serif text-3xl">Applications</h2>
+        <p className="mt-1 text-sm leading-6 text-muted">
+          A local log of every page you've run "Fill" on — company, role, when, and its status. Nothing here is sent
+          anywhere; it's just a record for you. Update the status as you go, or delete an entry you don't want kept.
+        </p>
+      </header>
+      {error ? <p className="text-sm text-clay">{error}</p> : null}
+      {rows?.length === 0 ? (
+        <Card>
+          <p className="text-sm text-muted">
+            No applications logged yet. Running "Fill" on a job application page adds one here automatically.
+          </p>
+        </Card>
+      ) : null}
+      {rows?.map((row) => (
+        <Card key={row.id}>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="font-serif text-xl">{row.role || "(role not detected)"}</h3>
+              <p className="text-sm text-muted">{row.company || "(company not detected)"}</p>
+              <a href={row.url} target="_blank" rel="noreferrer" className="text-sm text-moss-dark underline">
+                {row.url}
+              </a>
+              <p className="mt-1 text-sm text-muted">{new Date(row.date).toLocaleString()}</p>
+            </div>
+            <SelectField
+              label="Status"
+              value={row.status}
+              onChange={(status) => {
+                void db.applications
+                  .update(row.id, { status: status as ApplicationRecord["status"] })
+                  .then(reload)
+                  .catch(() => setError("Could not update that status."));
+              }}
+              options={Object.entries(APPLICATION_STATUS_LABELS).map(([value, label]) => ({ value, label }))}
+            />
+          </div>
+          <Button
+            tone="quiet"
+            onClick={() => {
+              void db.applications.delete(row.id).then(reload).catch(() => setError("Could not delete that entry."));
+            }}
+          >
+            Delete
+          </Button>
+        </Card>
       ))}
     </div>
   );

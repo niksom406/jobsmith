@@ -65,6 +65,25 @@ export function extractCompanyName(doc: ParentNode = document): string | null {
   return null;
 }
 
+/** Best-effort job title: JSON-LD's own `title` field first, then the page title up to " at "
+ * or a trailing " - Company" / " | Company" suffix. Purely for labeling an application record in
+ * the tracker -- never guessed at for anything that gets sent to the model or filled into a form. */
+export function extractJobTitle(doc: ParentNode = document): string | null {
+  for (const posting of jobPostingsFromJsonLd(doc)) {
+    const title = posting.title;
+    if (typeof title === "string" && title.trim()) return title.trim();
+  }
+  if (doc instanceof Document) {
+    const title = doc.title || "";
+    const beforeAt = /^(.+?)\s+\bat\b\s+.+$/i.exec(title);
+    if (beforeAt?.[1]) return beforeAt[1].trim();
+    const beforeSeparator = /^(.+?)\s*[-|]\s*.+$/.exec(title);
+    if (beforeSeparator?.[1]) return beforeSeparator[1].trim();
+    if (title.trim()) return title.trim();
+  }
+  return null;
+}
+
 function textFromMainContent(doc: ParentNode): string | null {
   const candidates = doc.querySelectorAll<HTMLElement>("main, article, [class*='job'], [class*='posting'], [class*='description']");
   let best: HTMLElement | null = null;

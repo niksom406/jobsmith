@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { FieldSummary } from "../../src/messaging/fillTypes";
+import { PROFILE_KEY_LABELS } from "../../src/autofill/profileValues";
 
 const STATUS_LABEL: Record<FieldSummary["status"], string> = {
   filled: "Filled",
@@ -34,14 +35,20 @@ function ArrowIcon() {
   );
 }
 
+const OVERRIDE_ELIGIBLE = new Set<FieldSummary["status"]>(["unmatched", "skipped_no_value", "skipped_low_confidence"]);
+
 export function FieldList({
   fields,
   onReplace,
+  onSetOverride,
 }: {
   fields: FieldSummary[];
   onReplace?: (fieldId: string) => Promise<void>;
+  onSetOverride?: (fieldId: string, profileKey: string) => Promise<void>;
 }) {
   const [replacingId, setReplacingId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [savingOverrideId, setSavingOverrideId] = useState<string | null>(null);
 
   if (fields.length === 0) return <p className="text-sm text-muted">No fields detected on this page yet.</p>;
 
@@ -55,27 +62,82 @@ export function FieldList({
     }
   }
 
+  function toggleExpanded(fieldId: string) {
+    setExpandedId((current) => (current === fieldId ? null : fieldId));
+  }
+
+  async function handleSetOverride(fieldId: string, profileKey: string) {
+    if (!onSetOverride) return;
+    setSavingOverrideId(fieldId);
+    try {
+      await onSetOverride(fieldId, profileKey);
+    } finally {
+      setSavingOverrideId(null);
+    }
+  }
+
   return (
     <ul className="space-y-2">
       {fields.map((field) => (
-        <li key={field.id} className="flex items-center justify-between gap-3 rounded-md border border-line bg-card px-3 py-2 text-sm">
-          <span>{field.label || `(${field.kind} field)`}</span>
-          <span className="flex items-center gap-2">
-            <span className={`flex items-center gap-1 ${STATUS_TONE[field.status]}`}>
-              {FILLED_STATUSES.has(field.status) ? <ArrowIcon /> : null}
-              {STATUS_LABEL[field.status]}
+        <li key={field.id} className="rounded-md border border-line bg-card px-3 py-2 text-sm">
+          <button
+            type="button"
+            onClick={() => toggleExpanded(field.id)}
+            className="flex w-full items-center justify-between gap-3 text-left"
+            aria-expanded={expandedId === field.id}
+          >
+            <span>{field.label || `(${field.kind} field)`}</span>
+            <span className="flex items-center gap-2">
+              <span className={`flex items-center gap-1 ${STATUS_TONE[field.status]}`}>
+                {FILLED_STATUSES.has(field.status) ? <ArrowIcon /> : null}
+                {STATUS_LABEL[field.status]}
+              </span>
             </span>
-            {field.status === "filled_ai_draft" && onReplace ? (
-              <button
-                type="button"
-                disabled={replacingId === field.id}
-                onClick={() => void handleReplace(field.id)}
-                className="rounded-md border border-line px-2 py-1 text-xs text-muted hover:text-ink disabled:opacity-50"
-              >
-                {replacingId === field.id ? "…" : "Replace"}
-              </button>
-            ) : null}
-          </span>
+          </button>
+          {expandedId === field.id ? (
+            <div className="mt-2 space-y-1 border-t border-line pt-2 text-xs text-muted">
+              {field.previewValue ? (
+                <p>
+                  <span className="font-medium text-ink">Value:</span> {field.previewValue}
+                </p>
+              ) : null}
+              {field.detail ? <p>{field.detail}</p> : null}
+              {OVERRIDE_ELIGIBLE.has(field.status) && onSetOverride ? (
+                <div className="flex items-center gap-2 pt-1">
+                  <label htmlFor={`override-${field.id}`} className="text-ink">
+                    Map this field to:
+                  </label>
+                  <select
+                    id={`override-${field.id}`}
+                    disabled={savingOverrideId === field.id}
+                    defaultValue=""
+                    onChange={(event) => void handleSetOverride(field.id, event.target.value)}
+                    className="rounded-md border border-line bg-card px-2 py-1 text-xs text-ink"
+                  >
+                    <option value="" disabled>
+                      Choose a profile field…
+                    </option>
+                    {Object.entries(PROFILE_KEY_LABELS).map(([key, label]) => (
+                      <option key={key} value={key}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-muted">Remembered for this site.</span>
+                </div>
+              ) : null}
+              {field.status === "filled_ai_draft" && onReplace ? (
+                <button
+                  type="button"
+                  disabled={replacingId === field.id}
+                  onClick={() => void handleReplace(field.id)}
+                  className="rounded-md border border-line px-2 py-1 text-xs text-muted hover:text-ink disabled:opacity-50"
+                >
+                  {replacingId === field.id ? "…" : "Replace"}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         </li>
       ))}
     </ul>

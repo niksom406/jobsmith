@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { expect, test } from "vitest";
-import { extractCompanyName, extractJobDescription } from "./extractJobDescription";
+import { extractCompanyName, extractJobDescription, extractJobTitle } from "./extractJobDescription";
 
 test("prefers JSON-LD JobPosting over page content", () => {
   document.body.innerHTML = `
@@ -43,4 +43,25 @@ test("falls back to an 'at <Company>' pattern in the page title when there is no
   document.title = "Senior Engineer at Acme Robotics - Ashby";
   document.body.innerHTML = `<div>Short</div>`;
   expect(extractCompanyName(document)).toBe("Acme Robotics");
+});
+
+test("extractJobTitle prefers the JSON-LD posting's own title field", () => {
+  document.body.innerHTML = `
+    <script type="application/ld+json">
+      {"@type":"JobPosting","title":"Senior Software Engineer","description":"Build great software."}
+    </script>
+  `;
+  expect(extractJobTitle(document)).toBe("Senior Software Engineer");
+});
+
+test("extractJobTitle falls back to the page title up to ' at '", () => {
+  document.body.innerHTML = `<div>Short</div>`;
+  document.title = "Senior Engineer at Acme Robotics - Ashby";
+  expect(extractJobTitle(document)).toBe("Senior Engineer");
+});
+
+test("extractJobTitle falls back to the page title up to a trailing separator when there's no 'at'", () => {
+  document.body.innerHTML = `<div>Short</div>`;
+  document.title = "Senior Engineer - Acme Robotics";
+  expect(extractJobTitle(document)).toBe("Senior Engineer");
 });
