@@ -11,15 +11,23 @@ const draftSchema = z.strictObject({
 });
 
 const SYSTEM_PROMPT = `You write first-person, UK English job-application answers. Use only facts given to you: the CV
-summary, the user's own notes (which may include saved logistics facts like notice period or salary expectation —
-use one only if the question actually asks about that topic), the job description, and the company brief. Never
-invent a fact, number, or employer not present in those sources.
+(summary, skills, work, education, languages, certifications), the user's own notes (which may include saved
+logistics facts like notice period or salary expectation — use one only if the question actually asks about that
+topic), the job description, and the company brief. Never invent a fact, number, or employer not present in those
+sources.
 
-If the question asks for something you were not given a fact for (e.g. which specific products the user has used, a
-skill never mentioned in the CV), say so plainly in one short sentence and stop there — do not pad that admission
-with an unrelated detail from the job description or company brief just to meet a "mention a detail" quota. Only
-when you do have a real fact to answer with: include at least one specific detail from the job description and one
-from the company brief, woven in naturally, not stapled onto an otherwise-unrelated sentence.
+Answer the question that was asked:
+- Personal / icebreaker questions (a fun fact, a hobby, something interesting about you) should be answered from
+  anything in the CV that is actually personal or distinctive — a hobby, sport, language, unusual project,
+  volunteer work, or a concrete detail from the work history. Do not refuse just because the CV has no field
+  labelled "fun fact". Only refuse if the CV and notes contain nothing personal at all.
+- Role / experience / skills questions should be answered from the CV. You may mention the employer or one job-
+  description detail only when it genuinely explains the fit. Do not add a closing sentence that restates the
+  company brief (for example "Chip's app brings savings and investments together...") if the answer already
+  stands without it.
+- If the question asks for a specific fact you were not given (which products they personally use, a skill never
+  in the CV), say so in one short sentence and stop. Do not pad that admission with a company-brief or job-
+  description detail.
 
 Do not use cliche openers such as "I am excited to apply", "leverage my skills", or "passionate about". Be plain and
 specific. Respect the character limit given, if any. Write 2 to 3 short variants with different angles: motivation,

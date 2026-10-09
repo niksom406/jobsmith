@@ -1,5 +1,6 @@
 import { getCompanyBrief } from "../../company/companyBrief";
 import { buildKnownFactsNote } from "../../autofill/knownFacts";
+import { buildCvDraftContext } from "../../autofill/cvDraftContext";
 import { profileSchema, createEmptyProfile } from "../../schemas/profile";
 import { preferencesSchema, createEmptyPreferences } from "../../schemas/preferences";
 import { settingsSchema, createDefaultSettings } from "../../schemas/settings";
@@ -48,7 +49,7 @@ export async function handleDraftCoverLetterRequest(payload: DraftCoverLetterReq
     model,
     jobTitle: payload.jobTitle,
     companyName: payload.companyName,
-    cvSummary: profile.summary || profile.skills.join(", "),
+    cvSummary: buildCvDraftContext(profile) || profile.summary || profile.skills.join(", "),
     userNotes,
     jobDescription: payload.jobDescription,
     companyBrief,
@@ -59,7 +60,7 @@ export async function handleDraftCoverLetterRequest(payload: DraftCoverLetterReq
     apiKey: settings.apiKey,
     model: settings.models.parse,
     draft: text,
-    cvSummary: profile.summary,
+    cvSummary: buildCvDraftContext(profile) || profile.summary,
     userNotes,
   });
 

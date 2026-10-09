@@ -1,6 +1,7 @@
 import { findBestAnswerMatch } from "../../answerBank/matching";
 import { getCompanyBrief } from "../../company/companyBrief";
 import { buildKnownFactsNote } from "../../autofill/knownFacts";
+import { buildCvDraftContext } from "../../autofill/cvDraftContext";
 import { profileSchema, createEmptyProfile } from "../../schemas/profile";
 import { preferencesSchema, createEmptyPreferences } from "../../schemas/preferences";
 import { settingsSchema, createDefaultSettings } from "../../schemas/settings";
@@ -77,7 +78,7 @@ export async function handleDraftAnswersRequest(payload: DraftAnswersRequest["pa
     apiKey: settings.apiKey,
     model,
     question: payload.question,
-    cvSummary: profile.summary || profile.skills.join(", "),
+    cvSummary: buildCvDraftContext(profile) || profile.summary || profile.skills.join(", "),
     userNotes,
     jobDescription: payload.jobDescription,
     companyBrief,
@@ -88,7 +89,7 @@ export async function handleDraftAnswersRequest(payload: DraftAnswersRequest["pa
     apiKey: settings.apiKey,
     model: settings.models.parse,
     draft: variants[0]?.text ?? "",
-    cvSummary: profile.summary,
+    cvSummary: buildCvDraftContext(profile) || profile.summary,
     userNotes,
   });
 

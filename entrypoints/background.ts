@@ -22,6 +22,7 @@ import { handleDraftAnswersRequest } from "../src/llm/prompts/handleDraftAnswers
 import { handleDraftCoverLetterRequest } from "../src/llm/prompts/handleDraftCoverLetter";
 import { draftCoverLetterRequestSchema } from "../src/messaging/coverLetterTypes";
 import { draftAnswerVariants } from "../src/llm/prompts/draftAnswer";
+import { buildCvDraftContext } from "../src/autofill/cvDraftContext";
 import { getCompanyBrief } from "../src/company/companyBrief";
 import { defineBackground } from "wxt/utils/define-background";
 
@@ -139,7 +140,7 @@ export default defineBackground(() => {
             apiKey: settings.apiKey,
             model,
             question,
-            cvSummary: profile.summary || profile.skills.join(", "),
+            cvSummary: buildCvDraftContext(profile) || profile.summary || profile.skills.join(", "),
             userNotes: knownFacts,
             jobDescription,
             companyBrief,

@@ -21,6 +21,22 @@ export function dispatchChangeEvents(element: HTMLElement): void {
   element.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
 }
 
+/** Marks an element as having just been set by Jobsmith itself, for the duration of this
+ * synchronous call stack only -- so a listener reacting to the `change` event this triggers (e.g.
+ * the "want to remember this answer?" prompt on a manually-answered radio/select) can tell a real
+ * user click apart from Jobsmith's own fill, without that marker lingering and wrongly suppressing
+ * the prompt the next time the user actually does change the field by hand. */
+const programmaticElements = new WeakSet<HTMLElement>();
+
+function markProgrammatic(element: HTMLElement): void {
+  programmaticElements.add(element);
+  queueMicrotask(() => programmaticElements.delete(element));
+}
+
+export function wasSetByJobsmith(element: HTMLElement): boolean {
+  return programmaticElements.has(element);
+}
+
 /** True if the field already has a value — Jobsmith only fills empty fields. */
 export function isEmpty(element: HTMLElement): boolean {
   if (element instanceof HTMLInputElement) {
@@ -33,6 +49,7 @@ export function isEmpty(element: HTMLElement): boolean {
 }
 
 export function setTextValue(element: HTMLInputElement | HTMLTextAreaElement, value: string): void {
+  markProgrammatic(element);
   const setter = nativeSetter(element);
   if (setter) setter(value);
   else element.value = value;
@@ -42,6 +59,7 @@ export function setTextValue(element: HTMLInputElement | HTMLTextAreaElement, va
 export function setSelectValue(element: HTMLSelectElement, optionValue: string): boolean {
   const option = Array.from(element.options).find((candidate) => candidate.value === optionValue);
   if (!option) return false;
+  markProgrammatic(element);
   const setter = nativeSetter(element);
   if (setter) setter(optionValue);
   else element.value = optionValue;
@@ -51,13 +69,17 @@ export function setSelectValue(element: HTMLSelectElement, optionValue: string):
 
 export function setCheckbox(element: HTMLInputElement, checked: boolean): void {
   if (element.checked === checked) return;
+  markProgrammatic(element);
   element.click();
 }
 
 export function setRadioGroup(elements: HTMLInputElement[], value: string): boolean {
   const target = elements.find((element) => element.value === value);
   if (!target) return false;
-  if (!target.checked) target.click();
+  if (!target.checked) {
+    markProgrammatic(target);
+    target.click();
+  }
   return true;
 }
 

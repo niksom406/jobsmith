@@ -15,7 +15,8 @@ import { createEmptyPreferences, preferencesSchema } from "../../src/schemas/pre
 import { createEmptyProfile, profileSchema } from "../../src/schemas/profile";
 import { createEmptySensitiveDefaults, sensitiveDefaultsSchema } from "../../src/schemas/sensitiveDefaults";
 import { findBestAnswerMatch } from "../../src/answerBank/matching";
-import { attachFileToInput, setTextValue, isEmpty } from "../../src/autofill/setValue";
+import { attachFileToInput, setTextValue, setSelectValue, setRadioGroup, isEmpty, wasSetByJobsmith } from "../../src/autofill/setValue";
+import { resolveDropdownOption } from "../../src/autofill/resolveOption";
 import { getCvFileRequestSchema, getCvFileResultSchema } from "../../src/messaging/documentTypes";
 import { base64ToBytes } from "../../src/storage/bytes";
 import { isAutomationBlocked } from "../../src/sites/access";
@@ -25,7 +26,7 @@ import { mapFieldsRequestSchema, mapFieldsResultSchema } from "../../src/messagi
 import { chromeLocalArea, LOCAL_KEYS, loadStored, saveStored } from "../../src/storage/localStore";
 import { createEmptyFieldOverrides, fieldOverridesSchema } from "../../src/schemas/fieldOverrides";
 import { fieldOverridesMigrations } from "../../src/schemas/migrateEntities";
-import { matchesFromOverrides, overrideKey } from "../../src/autofill/fieldOverrides";
+import { literalOverrideValue, matchesFromOverrides, overrideKey } from "../../src/autofill/fieldOverrides";
 import { setFieldOverrideRequestSchema } from "../../src/messaging/fieldOverrideTypes";
 import { fillAriaComboboxes, fillWorkdayDateGroups, type WidgetOutcome } from "../../src/autofill/workdayWidgets";
 import type { DetectedField, FieldMatch, ProfileValueMap } from "../../src/autofill/types";
@@ -75,6 +76,8 @@ export default defineContentScript({
       if (promptedFields.has(element)) return;
       element.addEventListener("blur", () => {
         if (isAutomationBlocked(window.location.href)) return;
+        // Jobsmith's own fill dispatches blur — that is not you editing the answer, so don't ask.
+        if (wasSetByJobsmith(element)) return;
         if (!isCapturable(element) || !isLongTextField(element)) return;
         const value = element.value.trim();
         if (value.length < 8) return;
@@ -157,7 +160,8 @@ export default defineContentScript({
       }
     }
 
-    /** Fills long-text fields the heuristics could not match, from a strong answer-bank match. */
+    /** Fills unmatched fields from a strong answer-bank match — long text, and also radio/select
+     * yes/no answers you saved after picking them by hand. */
     function fillFromAnswerBank(
       unmatched: DetectedField[],
       bank: AnswerBankEntrySummary[],
@@ -167,8 +171,11 @@ export default defineContentScript({
       const stillUnmatched: DetectedField[] = [];
 
       for (const field of unmatched) {
-        const isLongText = field.kind === "textarea" || field.kind === "text";
-        if (!isLongText || !isEmpty(field.element)) {
+        if (!isEmpty(field.element) && field.kind !== "radio") {
+          stillUnmatched.push(field);
+          continue;
+        }
+        if (field.kind === "radio" && field.groupElements?.some((element) => (element as HTMLInputElement).checked)) {
           stillUnmatched.push(field);
           continue;
         }
@@ -181,10 +188,49 @@ export default defineContentScript({
           stillUnmatched.push(field);
           continue;
         }
-        const element = field.element as HTMLInputElement | HTMLTextAreaElement;
-        undo.push({ element, kind: "text", previousValue: element.value });
-        setTextValue(element, entry.answer);
-        outcomes.push({ fieldId: field.id, status: "filled" });
+
+        if (field.kind === "textarea" || field.kind === "text") {
+          const element = field.element as HTMLInputElement | HTMLTextAreaElement;
+          undo.push({ element, kind: "text", previousValue: element.value });
+          setTextValue(element, entry.answer);
+          outcomes.push({ fieldId: field.id, status: "filled", previewValue: entry.answer });
+          continue;
+        }
+
+        if ((field.kind === "select" || field.kind === "radio") && field.options.length > 0) {
+          const matched = resolveDropdownOption(entry.answer, field.options);
+          if (!matched.option || matched.confidence === "low") {
+            stillUnmatched.push(field);
+            continue;
+          }
+          if (field.kind === "select") {
+            const element = field.element as HTMLSelectElement;
+            undo.push({ element, kind: "select", previousValue: element.value });
+            setSelectValue(element, matched.option.value);
+          } else if (field.groupElements) {
+            const groupElements = field.groupElements;
+            const first = groupElements[0];
+            if (!first) {
+              stillUnmatched.push(field);
+              continue;
+            }
+            undo.push({
+              element: first,
+              kind: "radio",
+              previousValue: "",
+              groupElements,
+              previousGroupChecked: groupElements.map((element) => (element as HTMLInputElement).checked),
+            });
+            setRadioGroup(groupElements as HTMLInputElement[], matched.option.value);
+          } else {
+            stillUnmatched.push(field);
+            continue;
+          }
+          outcomes.push({ fieldId: field.id, status: "filled", previewValue: matched.option.label });
+          continue;
+        }
+
+        stillUnmatched.push(field);
       }
 
       return { outcomes, undo, stillUnmatched };
@@ -320,6 +366,79 @@ export default defineContentScript({
       );
       return result.ok ? result.value : createEmptyFieldOverrides();
     }
+
+    /** Saves (or, given an empty value, clears) one field's remembered answer for this hostname --
+     * shared by the side panel's "Map this field to..." picker and the on-page save-this-answer
+     * prompt below, so there's exactly one place this is written. */
+    async function saveFieldOverride(field: DetectedField, overrideValue: string): Promise<void> {
+      const current = await loadFieldOverrides();
+      const key = overrideKey(window.location.hostname, field);
+      const overrides = { ...current.overrides };
+      if (overrideValue) overrides[key] = overrideValue;
+      else delete overrides[key];
+      await saveStored(chromeLocalArea, LOCAL_KEYS.fieldOverrides, fieldOverridesSchema, { ...current, overrides });
+    }
+
+    // Fresh on every page; a banner already shown for a field is replaced rather than stacked if
+    // the user flips their answer again before deciding.
+    const overrideBannerRemovers = new Map<string, () => void>();
+
+    /**
+     * Mirrors `attachSavePrompt` (text/textarea answer-bank saving) for radio and select fields:
+     * when you answer a question by hand -- usually one Jobsmith correctly left blank because
+     * there was no profile fact to answer it from (e.g. "Do you have Fintech experience?") -- a
+     * small banner offers to remember that exact answer as a per-site field override, the same
+     * literal-answer mechanism the side panel's field-override picker uses. Ignores any change that
+     * was Jobsmith's own fill (see `wasSetByJobsmith` in setValue.ts), so this never fires for a
+     * field Jobsmith already answered confidently.
+     */
+    function attachOverrideSavePrompt() {
+      document.addEventListener("change", (event) => {
+        if (isAutomationBlocked(window.location.href)) return;
+        const target = event.target;
+        const isRadio = target instanceof HTMLInputElement && target.type === "radio";
+        const isSelect = target instanceof HTMLSelectElement;
+        if (!isRadio && !isSelect) return;
+        if (wasSetByJobsmith(target as HTMLElement)) return;
+
+        const fields = detectFields(document);
+        const field = fields.find((candidate) =>
+          isSelect ? candidate.element === target : candidate.groupElements?.includes(target as HTMLInputElement),
+        );
+        if (!field) return;
+
+        const answerLabel = isSelect
+          ? ((target as HTMLSelectElement).selectedOptions[0]?.text.trim() || (target as HTMLSelectElement).value)
+          : (target as HTMLInputElement).closest("label")?.textContent?.trim() || labelForElement(target as HTMLInputElement) || (target as HTMLInputElement).value;
+        if (!answerLabel) return;
+
+        overrideBannerRemovers.get(field.id)?.();
+        const remove = showSaveAnswerBanner(target as HTMLElement, {
+          question: field.label,
+          answer: answerLabel,
+          onSave: () => {
+            void saveFieldOverride(field, literalOverrideValue(answerLabel));
+            void chrome.runtime.sendMessage(
+              saveAnswerRequestSchema.parse({
+                type: "save-answer",
+                payload: {
+                  question: field.label || labelForElement(target as HTMLElement),
+                  answer: answerLabel,
+                  fieldType: isSelect ? "select" : "radio",
+                  company: "",
+                  role: "",
+                },
+              }),
+            );
+          },
+          onDismiss: () => {
+            overrideBannerRemovers.delete(field.id);
+          },
+        });
+        overrideBannerRemovers.set(field.id, remove);
+      });
+    }
+    attachOverrideSavePrompt();
 
     /**
      * A genuine preview: every layer below is called with `dryRun: true`, so nothing on the page
@@ -493,20 +612,7 @@ export default defineContentScript({
             sendResponse({ ok: false, error: "That field could not be found on the page anymore. Try detecting fields again." });
             return;
           }
-
-          const stored = await loadStored(
-            chromeLocalArea,
-            LOCAL_KEYS.fieldOverrides,
-            fieldOverridesSchema,
-            fieldOverridesMigrations,
-            createEmptyFieldOverrides(),
-          );
-          const current = stored.ok ? stored.value : createEmptyFieldOverrides();
-          const key = overrideKey(window.location.hostname, field);
-          const overrides = { ...current.overrides };
-          if (profileKey) overrides[key] = profileKey;
-          else delete overrides[key];
-          await saveStored(chromeLocalArea, LOCAL_KEYS.fieldOverrides, fieldOverridesSchema, { ...current, overrides });
+          await saveFieldOverride(field, profileKey);
           sendResponse({ ok: true });
         })();
         return true;
