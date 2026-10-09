@@ -10,7 +10,17 @@ const SYNONYMS: Record<string, string[]> = {
   phone: ["phone", "phone number", "mobile", "telephone", "cell"],
   "address.line1": ["address", "street address", "address line 1", "address1"],
   "address.line2": ["address line 2", "address2", "apartment", "suite"],
-  "address.city": ["city", "town"],
+  "address.city": [
+    "city",
+    "town",
+    "currently based",
+    "where are you based",
+    "where are you located",
+    "where do you live",
+    "current location",
+    "current city",
+    "based",
+  ],
   "address.region": ["state", "region", "province", "county"],
   "address.postalCode": ["postal code", "zip", "zip code", "postcode"],
   "address.country": ["country", "nationality"],
@@ -104,13 +114,10 @@ export function matchFieldHeuristically(field: DetectedField): FieldMatch | null
       }
     }
   }
-  // A long-text box (a <textarea>, or a text input with a generous/no maxlength) is almost always
-  // an open-ended essay question, not a short structured field -- so a question like "What relevant
-  // experience/skills will you bring?" must not get hijacked by the "skills" synonym just because
-  // the word appears somewhere in it. Alias/substring matching stays Layer-1-only for genuinely
-  // short fields; an unmatched long-text field falls through to the answer bank, then the
-  // AI-drafted-answer layer, which actually reads the whole question instead of pattern-matching
-  // one word in it.
+  // A <textarea> or a text input with an explicit maxlength over 120 is an open-ended essay, not a
+  // short structured field -- so "What relevant experience/skills will you bring?" must not get
+  // hijacked by the "skills" synonym. Alias matching stays for single-line inputs (city, name,
+  // title). Unmatched essays fall through to the answer bank, then the AI-drafted-answer layer.
   if (isLongTextField(field.element)) return null;
 
   const aliasMatch = bestAliasMatch(haystacks, Object.entries(SYNONYMS));

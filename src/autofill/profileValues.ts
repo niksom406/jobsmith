@@ -17,7 +17,7 @@ export function flattenProfileValues(profile: Profile, preferences: Preferences)
     phone: profile.phone,
     "address.line1": profile.address.line1,
     "address.line2": profile.address.line2,
-    "address.city": profile.address.city,
+    "address.city": profile.address.city || latestRole?.location || "",
     "address.region": profile.address.region,
     "address.postalCode": profile.address.postalCode,
     "address.country": profile.address.country,

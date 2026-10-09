@@ -35,6 +35,13 @@ test("an essay question is not hijacked by a one-word alias substring match, in 
   expect(match).toBeNull();
 });
 
+test("Where are you currently based maps to address.city, not an unmatched essay", () => {
+  document.body.innerHTML = `<label for="based">Where are you currently based?</label><input id="based" type="text" placeholder="Type here...">`;
+  const fields = detectFields(document);
+  const match = matchFieldHeuristically(fields[0]!);
+  expect(match?.profileKey).toBe("address.city");
+});
+
 test("...or in a long-maxlength text input, but a short field just named 'Skills' still matches", () => {
   document.body.innerHTML = `
     <label for="essay">Tell us about your experience with our tech stack and why you want this role</label>

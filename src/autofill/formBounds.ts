@@ -10,9 +10,11 @@ export function isCapturable(element: HTMLElement): boolean {
 
 export function isLongTextField(element: HTMLElement): boolean {
   if (element instanceof HTMLTextAreaElement) return true;
-  if (element instanceof HTMLInputElement && element.type === "text") {
-    const maxLength = element.maxLength;
-    return maxLength === -1 || maxLength > 120;
+  // A single-line text input with no maxlength (the HTML default, reported as -1) is a short
+  // structured field — city, name, title — not an essay. Treating -1 as "long" disabled alias
+  // matching on almost every text input, so "Where are you currently based?" never mapped to city.
+  if (element instanceof HTMLInputElement && (element.type === "text" || element.type === "")) {
+    return element.maxLength > 120;
   }
   return false;
 }

@@ -66,12 +66,13 @@ test("fills at least 90% of standard fields on the Lever fixture", () => {
   const values = flattenProfileValues(sampleProfile(), samplePreferences());
   const { outcomes } = fillFields(fields, matches, values);
 
-  const standardFields = fields.filter((field) => field.kind !== "file" && field.kind !== "textarea" && field.name !== "location");
+  const standardFields = fields.filter((field) => field.kind !== "file" && field.kind !== "textarea");
   const filledStandard = outcomes.filter((outcome) => outcome.status === "filled" && standardFields.some((field) => field.id === outcome.fieldId));
   expect(filledStandard.length / standardFields.length).toBeGreaterThanOrEqual(0.9);
 
   expect((document.querySelector('input[name="email"]') as HTMLInputElement).value).toBe("ada@example.com");
   expect((document.querySelector('select[name="sponsorship"]') as HTMLSelectElement).value).toBe("n");
+  expect((document.querySelector('input[name="location"]') as HTMLInputElement).value).toBe("London");
 });
 
 test("never fills a field that already has a value", () => {

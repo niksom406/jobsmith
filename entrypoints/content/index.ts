@@ -72,26 +72,38 @@ export default defineContentScript({
       return element.closest("label")?.textContent?.trim() ?? element.getAttribute("aria-label") ?? element.getAttribute("name") ?? "";
     }
 
+    function fieldForElement(element: HTMLElement): DetectedField | undefined {
+      const fields = detectFields(document);
+      return fields.find(
+        (candidate) => candidate.element === element || candidate.groupElements?.includes(element),
+      );
+    }
+
     function attachSavePrompt(element: HTMLInputElement | HTMLTextAreaElement) {
       if (promptedFields.has(element)) return;
       element.addEventListener("blur", () => {
         if (isAutomationBlocked(window.location.href)) return;
         // Jobsmith's own fill dispatches blur — that is not you editing the answer, so don't ask.
         if (wasSetByJobsmith(element)) return;
-        if (!isCapturable(element) || !isLongTextField(element)) return;
+        const field = fieldForElement(element);
+        if (!isCapturable(element) && !field) return;
         const value = element.value.trim();
-        if (value.length < 8) return;
+        // Short answers like "London" or "Yes" are exactly the ones worth remembering; the old
+        // 8-character floor meant a city name never triggered the banner.
+        if (value.length < 2) return;
         if (promptedFields.has(element)) return;
         promptedFields.add(element);
+        const question = field?.label || labelForElement(element);
         showSaveAnswerBanner(element, {
-          question: labelForElement(element),
+          question,
           answer: value,
           onSave: () => {
+            if (field) void saveFieldOverride(field, literalOverrideValue(value));
             void chrome.runtime.sendMessage(
               saveAnswerRequestSchema.parse({
                 type: "save-answer",
                 payload: {
-                  question: labelForElement(element),
+                  question,
                   answer: value,
                   fieldType: element instanceof HTMLTextAreaElement ? "textarea" : "text",
                   company: "",
@@ -107,14 +119,16 @@ export default defineContentScript({
       });
     }
 
-    function watchLongTextFields() {
+    function watchTextFields() {
       document
-        .querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("textarea, input[type='text']")
+        .querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
+          "textarea, input[type='text'], input[type='search'], input:not([type])",
+        )
         .forEach((element) => attachSavePrompt(element));
     }
 
-    watchLongTextFields();
-    new MutationObserver(() => watchLongTextFields()).observe(document.body, { childList: true, subtree: true });
+    watchTextFields();
+    new MutationObserver(() => watchTextFields()).observe(document.body, { childList: true, subtree: true });
 
     const RESUME_FIELD_HINTS = /resume|\bcv\b|curriculum/i;
     const NON_RESUME_FILE_HINTS = /cover.?letter|transcript|portfolio|writing.?sample/i;
