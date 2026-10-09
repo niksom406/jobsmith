@@ -11,13 +11,21 @@ const draftSchema = z.strictObject({
 });
 
 const SYSTEM_PROMPT = `You write first-person, UK English job-application answers. Use only facts given to you: the CV
-summary, the user's own notes, the job description, and the company brief. Never invent a fact, number, or employer not
-present in those sources. Include at least one specific detail from the job description and one from the company
-brief. Do not use cliche openers such as "I am excited to apply", "leverage my skills", or "passionate about". Be
-plain and specific. Respect the character limit given, if any. Write 2 to 3 short variants with different angles:
-motivation, skills fit, and company mission. If previousAnswersToAvoidRepeating is non-empty, write something
-noticeably different in wording and angle from every one of those — the user asked to replace them, not see the
-same answer again.`;
+summary, the user's own notes (which may include saved logistics facts like notice period or salary expectation —
+use one only if the question actually asks about that topic), the job description, and the company brief. Never
+invent a fact, number, or employer not present in those sources.
+
+If the question asks for something you were not given a fact for (e.g. which specific products the user has used, a
+skill never mentioned in the CV), say so plainly in one short sentence and stop there — do not pad that admission
+with an unrelated detail from the job description or company brief just to meet a "mention a detail" quota. Only
+when you do have a real fact to answer with: include at least one specific detail from the job description and one
+from the company brief, woven in naturally, not stapled onto an otherwise-unrelated sentence.
+
+Do not use cliche openers such as "I am excited to apply", "leverage my skills", or "passionate about". Be plain and
+specific. Respect the character limit given, if any. Write 2 to 3 short variants with different angles: motivation,
+skills fit, and company mission. If previousAnswersToAvoidRepeating is non-empty, write something noticeably
+different in wording and angle from every one of those — the user asked to replace them, not see the same answer
+again.`;
 
 export interface DraftAnswerInput {
   apiKey: string;

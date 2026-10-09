@@ -38,6 +38,7 @@ export function flattenProfileValues(profile: Profile, preferences: Preferences)
     "preferences.remotePreference": preferences.remotePreference,
     "preferences.sponsorshipNeeded":
       preferences.sponsorshipNeeded === null ? "" : preferences.sponsorshipNeeded ? "Yes" : "No",
+    "preferences.willingnessToTravel": preferences.willingnessToTravel,
   };
 
   for (const key of Object.keys(values)) {
@@ -74,4 +75,5 @@ export const PROFILE_KEY_LABELS: Record<string, string> = {
   "preferences.relocation": "Willing to relocate",
   "preferences.remotePreference": "Remote work preference",
   "preferences.sponsorshipNeeded": "Sponsorship needed",
+  "preferences.willingnessToTravel": "Willingness to travel",
 };

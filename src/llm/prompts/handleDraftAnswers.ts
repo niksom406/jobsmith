@@ -1,6 +1,8 @@
 import { findBestAnswerMatch } from "../../answerBank/matching";
 import { getCompanyBrief } from "../../company/companyBrief";
+import { buildKnownFactsNote } from "../../autofill/knownFacts";
 import { profileSchema, createEmptyProfile } from "../../schemas/profile";
+import { preferencesSchema, createEmptyPreferences } from "../../schemas/preferences";
 import { settingsSchema, createDefaultSettings } from "../../schemas/settings";
 import { db } from "../../storage/db";
 import { chromeLocalArea, LOCAL_KEYS } from "../../storage/localStore";
@@ -8,11 +10,17 @@ import type { DraftAnswersRequest, DraftAnswersResult } from "../../messaging/dr
 import { draftAnswerVariants, verifyAnswerClaims } from "./draftAnswer";
 
 export async function handleDraftAnswersRequest(payload: DraftAnswersRequest["payload"]): Promise<DraftAnswersResult> {
-  const stored = await chromeLocalArea.get([LOCAL_KEYS.settings, LOCAL_KEYS.profile]);
+  const stored = await chromeLocalArea.get([LOCAL_KEYS.settings, LOCAL_KEYS.profile, LOCAL_KEYS.preferences]);
   const settingsParsed = settingsSchema.safeParse(stored[LOCAL_KEYS.settings]);
   const profileParsed = profileSchema.safeParse(stored[LOCAL_KEYS.profile]);
+  const preferencesParsed = preferencesSchema.safeParse(stored[LOCAL_KEYS.preferences]);
   const settings = settingsParsed.success ? settingsParsed.data : createDefaultSettings();
   const profile = profileParsed.success ? profileParsed.data : createEmptyProfile();
+  const preferences = preferencesParsed.success ? preferencesParsed.data : createEmptyPreferences();
+  // The user's own typed notes take priority (they're more specific); the saved logistics facts
+  // from Preferences are appended after, so a question about availability/salary/relocation can be
+  // answered from what's actually saved instead of declining for lack of information.
+  const userNotes = [payload.userNotes, buildKnownFactsNote(preferences)].filter(Boolean).join("\n\n");
 
   if (!settings.apiKey) {
     return { ok: false, error: "Add an OpenAI API key in Settings → AI before drafting an answer.", needsCompanyBrief: false, needsJobDescription: false };
@@ -56,7 +64,7 @@ export async function handleDraftAnswersRequest(payload: DraftAnswersRequest["pa
     companyBrief = brief.brief;
     companyBriefSource = brief.source;
   }
-  if (!companyBrief && !payload.userNotes.trim()) {
+  if (!companyBrief && !userNotes.trim()) {
     return {
       ok: false,
       error: "Jobsmith searched the web but could not find a reliable company brief for this domain.",
@@ -70,7 +78,7 @@ export async function handleDraftAnswersRequest(payload: DraftAnswersRequest["pa
     model,
     question: payload.question,
     cvSummary: profile.summary || profile.skills.join(", "),
-    userNotes: payload.userNotes,
+    userNotes,
     jobDescription: payload.jobDescription,
     companyBrief,
     characterLimit: payload.characterLimit ?? undefined,
@@ -81,7 +89,7 @@ export async function handleDraftAnswersRequest(payload: DraftAnswersRequest["pa
     model: settings.models.parse,
     draft: variants[0]?.text ?? "",
     cvSummary: profile.summary,
-    userNotes: payload.userNotes,
+    userNotes,
   });
 
   return { ok: true, variants, unsupportedClaims, companyBriefSource, usedAnswerBank: false };

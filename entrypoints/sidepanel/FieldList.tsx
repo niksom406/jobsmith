@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { FieldSummary } from "../../src/messaging/fillTypes";
 import { PROFILE_KEY_LABELS } from "../../src/autofill/profileValues";
+import { literalOverrideValue } from "../../src/autofill/fieldOverrides";
 
 const STATUS_LABEL: Record<FieldSummary["status"], string> = {
   filled: "Filled",
@@ -85,6 +86,7 @@ export function FieldList({
   const [revertingId, setRevertingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [savingOverrideId, setSavingOverrideId] = useState<string | null>(null);
+  const [literalInputByField, setLiteralInputByField] = useState<Record<string, string>>({});
   // Whether each AI-drafted field has an earlier version to step back to -- starts false (the first
   // draft has nothing before it) and flips to true after the first "Regenerate" click on that field.
   const [canRevertByField, setCanRevertByField] = useState<Record<string, boolean>>({});
@@ -159,27 +161,51 @@ export function FieldList({
               ) : null}
               {field.detail ? <p>{field.detail}</p> : null}
               {OVERRIDE_ELIGIBLE.has(field.status) && onSetOverride ? (
-                <div className="flex items-center gap-2 pt-1">
-                  <label htmlFor={`override-${field.id}`} className="text-ink">
-                    Map this field to:
-                  </label>
-                  <select
-                    id={`override-${field.id}`}
-                    disabled={savingOverrideId === field.id}
-                    defaultValue=""
-                    onChange={(event) => void handleSetOverride(field.id, event.target.value)}
-                    className="rounded-md border border-line bg-card px-2 py-1 text-xs text-ink"
-                  >
-                    <option value="" disabled>
-                      Choose a profile field…
-                    </option>
-                    {Object.entries(PROFILE_KEY_LABELS).map(([key, label]) => (
-                      <option key={key} value={key}>
-                        {label}
+                <div className="space-y-2 pt-1">
+                  <div className="flex items-center gap-2">
+                    <label htmlFor={`override-${field.id}`} className="text-ink">
+                      Map this field to:
+                    </label>
+                    <select
+                      id={`override-${field.id}`}
+                      disabled={savingOverrideId === field.id}
+                      defaultValue=""
+                      onChange={(event) => void handleSetOverride(field.id, event.target.value)}
+                      className="rounded-md border border-line bg-card px-2 py-1 text-xs text-ink"
+                    >
+                      <option value="" disabled>
+                        Choose a profile field…
                       </option>
-                    ))}
-                  </select>
-                  <span className="text-muted">Remembered for this site.</span>
+                      {Object.entries(PROFILE_KEY_LABELS).map(([key, label]) => (
+                        <option key={key} value={key}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label htmlFor={`override-literal-${field.id}`} className="text-ink">
+                      Or just type the answer:
+                    </label>
+                    <input
+                      id={`override-literal-${field.id}`}
+                      type="text"
+                      disabled={savingOverrideId === field.id}
+                      value={literalInputByField[field.id] ?? ""}
+                      onChange={(event) => setLiteralInputByField((current) => ({ ...current, [field.id]: event.target.value }))}
+                      placeholder="e.g. Yes"
+                      className="w-28 rounded-md border border-line bg-card px-2 py-1 text-xs text-ink"
+                    />
+                    <button
+                      type="button"
+                      disabled={savingOverrideId === field.id || !(literalInputByField[field.id] ?? "").trim()}
+                      onClick={() => void handleSetOverride(field.id, literalOverrideValue((literalInputByField[field.id] ?? "").trim()))}
+                      className="rounded-md border border-line px-2 py-1 text-xs text-muted hover:text-ink disabled:opacity-50"
+                    >
+                      Save
+                    </button>
+                  </div>
+                  <span className="text-muted">Either way, remembered for this site -- not just this fill.</span>
                 </div>
               ) : null}
               {field.status === "filled_ai_draft" && (onReplace || onRevert) ? (

@@ -16,6 +16,10 @@ export const draftFieldAnswerRequestSchema = z.strictObject({
     // Previous drafts for this same field, sent back in on a "Replace" click so the model writes
     // something different rather than a near-duplicate.
     avoidTexts: z.array(z.string()),
+    // The logistics facts already saved in Preferences (notice period, start date, salary, etc.),
+    // from src/autofill/knownFacts.ts -- so a question about availability/salary/relocation can be
+    // answered from what's actually saved instead of declining for lack of information.
+    knownFacts: z.string(),
   }),
 });
 

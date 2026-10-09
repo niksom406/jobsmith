@@ -110,7 +110,7 @@ export default defineBackground(() => {
     const draftFieldAnswer = draftFieldAnswerRequestSchema.safeParse(message);
     if (draftFieldAnswer.success) {
       void (async () => {
-        const { question, jobDescription, companyDomain, companyName, avoidTexts } = draftFieldAnswer.data.payload;
+        const { question, jobDescription, companyDomain, companyName, avoidTexts, knownFacts } = draftFieldAnswer.data.payload;
         const stored = await chromeLocalArea.get([LOCAL_KEYS.settings, LOCAL_KEYS.profile]);
         const settingsParsed = settingsSchema.safeParse(stored[LOCAL_KEYS.settings]);
         const profileParsed = profileSchema.safeParse(stored[LOCAL_KEYS.profile]);
@@ -140,7 +140,7 @@ export default defineBackground(() => {
             model,
             question,
             cvSummary: profile.summary || profile.skills.join(", "),
-            userNotes: "",
+            userNotes: knownFacts,
             jobDescription,
             companyBrief,
             avoidTexts,

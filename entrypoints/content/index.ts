@@ -31,6 +31,8 @@ import { fillAriaComboboxes, fillWorkdayDateGroups, type WidgetOutcome } from ".
 import type { DetectedField, FieldMatch, ProfileValueMap } from "../../src/autofill/types";
 import type { FillOutcome, UndoEntry as UndoEntryType } from "../../src/autofill/fill";
 import { extractJobDescription, extractJobTitle } from "../../src/jd/extractJobDescription";
+import { buildKnownFactsNote } from "../../src/autofill/knownFacts";
+import type { Preferences } from "../../src/schemas/preferences";
 import { upsertApplicationRequestSchema } from "../../src/messaging/applicationTypes";
 import {
   draftFieldAnswerRequestSchema,
@@ -53,6 +55,7 @@ export default defineContentScript({
       question: string;
       variants: { angle: string; text: string }[];
       usedIndex: number;
+      knownFacts: string;
     }
     // Fresh on every "Fill" (see run-fill below) — tracks fields Jobsmith auto-drafted so the side
     // panel's "Replace" button can swap in another variant, or ask for a fresh one, without
@@ -240,6 +243,7 @@ export default defineContentScript({
      */
     async function fillFromAiDraft(
       unmatched: DetectedField[],
+      preferences: Preferences,
     ): Promise<{ outcomes: { fieldId: string; status: "filled_ai_draft" }[]; undo: UndoEntryType[]; stillUnmatched: DetectedField[] }> {
       const outcomes: { fieldId: string; status: "filled_ai_draft" }[] = [];
       const undo: UndoEntryType[] = [];
@@ -259,6 +263,7 @@ export default defineContentScript({
         return { outcomes, undo, stillUnmatched };
       }
 
+      const knownFacts = buildKnownFactsNote(preferences);
       for (const field of longTextFields) {
         const element = field.element as HTMLInputElement | HTMLTextAreaElement;
         try {
@@ -271,6 +276,7 @@ export default defineContentScript({
                 companyDomain: window.location.hostname,
                 companyName: jd.companyName ?? "",
                 avoidTexts: [],
+                knownFacts,
               },
             }),
           );
@@ -283,7 +289,7 @@ export default defineContentScript({
           undo.push({ element, kind: "text", previousValue: element.value });
           setTextValue(element, text);
           outcomes.push({ fieldId: field.id, status: "filled_ai_draft" });
-          aiDraftState.set(field.id, { element, question: field.label, variants: parsed.data.variants, usedIndex: 0 });
+          aiDraftState.set(field.id, { element, question: field.label, variants: parsed.data.variants, usedIndex: 0, knownFacts });
         } catch {
           stillUnmatched.push(field);
         }
@@ -339,7 +345,7 @@ export default defineContentScript({
         ...overrideResult.excludedFieldIds,
       ]);
       const { matches, unmatched } = matchFieldsHeuristically(fields.filter((field) => !excludedFieldIds.has(field.id)));
-      const values = flattenProfileValues(profile, preferences);
+      const values = { ...flattenProfileValues(profile, preferences), ...overrideResult.literalValues };
       const safeMatches = [...removeSensitiveMatches(matches, excludedFieldIds), ...overrideResult.matches];
       const { outcomes } = fillFields(fields, safeMatches, values, undefined, { dryRun: true });
 
@@ -389,7 +395,7 @@ export default defineContentScript({
           const { matches, unmatched } = matchFieldsHeuristically(
             fields.filter((field) => !excludedFieldIds.has(field.id)),
           );
-          const values = flattenProfileValues(profile, preferences);
+          const values = { ...flattenProfileValues(profile, preferences), ...overrideResult.literalValues };
           const safeMatches = [...removeSensitiveMatches(matches, excludedFieldIds), ...overrideResult.matches];
           const { outcomes, undo } = fillFields(fields, safeMatches, values);
 
@@ -398,7 +404,7 @@ export default defineContentScript({
           const fromMapping = await fillFromLlmMapping(fromBank.stillUnmatched, values);
 
           const fileOutcomes = await attachStoredCvToFileInputs(fields);
-          const fromAiDraft = await fillFromAiDraft(fromMapping.stillUnmatched);
+          const fromAiDraft = await fillFromAiDraft(fromMapping.stillUnmatched, preferences);
 
           // Workday renders most pickers as custom widgets rather than native <select>/<input
           // type="date">, so they never show up in `fields` at all -- this runs as a separate pass
@@ -541,6 +547,7 @@ export default defineContentScript({
                   companyDomain: window.location.hostname,
                   companyName: jd.companyName ?? "",
                   avoidTexts: entry.variants.map((variant) => variant.text),
+                  knownFacts: entry.knownFacts,
                 },
               }),
             );
