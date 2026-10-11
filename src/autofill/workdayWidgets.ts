@@ -45,7 +45,24 @@ export async function fillAriaComboboxes(root: Document, values: ProfileValueMap
       continue;
     }
 
-    const optionElements = Array.from(listbox.querySelectorAll<HTMLElement>("[role='option']"));
+    let optionElements = Array.from(listbox.querySelectorAll<HTMLElement>("[role='option']"));
+
+    // Typeahead combobox (e.g. location "Start typing..."): clicking opens an empty listbox —
+    // we must type the value into the associated text input to trigger search, then wait for results.
+    if (optionElements.length === 0) {
+      const textInput = findTypeaheadInput(trigger, root);
+      if (textInput) {
+        setTextValue(textInput, value);
+        optionElements = await waitForOptions(listbox, 2000);
+      }
+    }
+
+    if (optionElements.length === 0) {
+      trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      outcomes.push({ label, status: "skipped_no_options" });
+      continue;
+    }
+
     const options = optionElements.map((element, index) => ({ value: String(index), label: element.textContent?.trim() ?? "" }));
     const matched = matchDropdownOption(value, options);
     if (!matched.option || matched.confidence === "low") {
@@ -107,6 +124,51 @@ async function waitForListbox(trigger: HTMLElement, timeoutMs = 1500): Promise<H
       observer.disconnect();
       resolve(doc.querySelector<HTMLElement>("[role='listbox']"));
     }, timeoutMs);
+  });
+}
+
+/**
+ * For typeahead comboboxes ("Start typing..."), finds the text input that actually receives
+ * typed characters. Looks inside the trigger's container, then falls back to any visible
+ * text input that appeared after the dropdown opened (common in React-select and similar).
+ */
+function findTypeaheadInput(trigger: HTMLElement, root: Document): HTMLInputElement | null {
+  // Some implementations put the input directly inside the combobox container.
+  const container = trigger.closest("[role='combobox']") ?? trigger.parentElement;
+  if (container) {
+    const inner = container.querySelector<HTMLInputElement>("input[type='text'], input:not([type])");
+    if (inner) return inner;
+  }
+  // Fallback: look for a focused or newly visible input near the listbox.
+  const activeEl = root.activeElement;
+  if (activeEl instanceof HTMLInputElement && (activeEl.type === "text" || !activeEl.type)) {
+    return activeEl;
+  }
+  return null;
+}
+
+/**
+ * Polls a listbox element until [role='option'] children appear (up to timeoutMs).
+ * Used for typeahead comboboxes that populate results asynchronously after typing.
+ */
+async function waitForOptions(listbox: HTMLElement, timeoutMs: number): Promise<HTMLElement[]> {
+  return new Promise((resolve) => {
+    const check = () => {
+      const opts = Array.from(listbox.querySelectorAll<HTMLElement>("[role='option']"));
+      if (opts.length > 0) {
+        observer.disconnect();
+        clearTimeout(timer);
+        resolve(opts);
+      }
+    };
+    const observer = new MutationObserver(check);
+    observer.observe(listbox, { childList: true, subtree: true });
+    const timer = setTimeout(() => {
+      observer.disconnect();
+      resolve(Array.from(listbox.querySelectorAll<HTMLElement>("[role='option']")));
+    }, timeoutMs);
+    // Also check immediately in case results are already there.
+    check();
   });
 }
 

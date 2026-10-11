@@ -21,6 +21,8 @@ export const preferencesSchema = z.strictObject({
   relocation: z.enum(["yes", "no", "discuss"]),
   remotePreference: z.enum(["remote", "hybrid", "onsite", "flexible"]),
   willingnessToTravel: z.enum(["none", "occasional", "frequent"]),
+  linkedin: z.string().optional(),
+  github: z.string().optional(),
 });
 
 export type Preferences = z.infer<typeof preferencesSchema>;
@@ -36,5 +38,7 @@ export function createEmptyPreferences(): Preferences {
     relocation: "discuss",
     remotePreference: "flexible",
     willingnessToTravel: "occasional",
+    linkedin: "",
+    github: "",
   };
 }

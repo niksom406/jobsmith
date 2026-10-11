@@ -19,15 +19,33 @@ function labelFor(element: HTMLElement, root: ParentNode): string {
   const wrappingLabel = element.closest("label");
   if (wrappingLabel?.textContent) return wrappingLabel.textContent.trim();
 
-  // Greenhouse/Lever often put the label in a preceding sibling or parent block, not a <label>.
+  // Greenhouse/Lever/Salesforce often put the label in a preceding sibling or parent block, not a <label>.
   let node: Element | null = element.parentElement;
-  for (let depth = 0; depth < 3 && node; depth += 1) {
+  for (let depth = 0; depth < 4 && node; depth += 1) {
     const text = node.querySelector(".label, legend, [class*='label']")?.textContent;
     if (text?.trim()) return text.trim();
+
+    // In table-based layouts (like Salesforce), the label is often in the previous <td> or <div>.
+    // We only use it if it's reasonably short so we don't accidentally grab a paragraph of text.
+    const prevSibling = node.previousElementSibling;
+    if (prevSibling?.textContent) {
+      const prevText = prevSibling.textContent.trim();
+      if (prevText && prevText.length < 150) return prevText;
+    }
+
     node = node.parentElement;
   }
 
-  return element.getAttribute("placeholder") ?? element.getAttribute("name") ?? "";
+  const placeholder = element.getAttribute("placeholder");
+  if (placeholder) return placeholder.trim();
+
+  const name = element.getAttribute("name") || "";
+  // Ignore Salesforce/Visualforce "j_id" hashes, ASP.NET "ctl00$" junk, or uuids.
+  if (name && !name.includes("j_id") && !name.includes("$") && !/^[0-9a-f]{8}-/i.test(name)) {
+    return name;
+  }
+
+  return "";
 }
 
 /**

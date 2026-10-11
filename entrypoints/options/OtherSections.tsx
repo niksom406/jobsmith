@@ -101,6 +101,9 @@ export function DocumentsSection() {
     void reload();
   }, []);
 
+  const regularDocs = rows?.filter((r) => r.kind !== "knowledge_base") ?? [];
+  const kbDocs = rows?.filter((r) => r.kind === "knowledge_base") ?? [];
+
   return (
     <div className="space-y-4">
       <header>
@@ -110,10 +113,147 @@ export function DocumentsSection() {
         </p>
       </header>
       {rows === null ? <p className="text-sm text-muted">Loading…</p> : null}
-      {rows?.length === 0 ? (
+      {rows !== null && regularDocs.length === 0 ? (
         <Card>
           <p className="text-sm text-muted">
             No documents yet. Upload a CV from the "Upload CV" tab — it's stored here once you finish the review step.
+          </p>
+        </Card>
+      ) : null}
+      {regularDocs.map((row) => (
+        <DocumentRow key={row.id} row={row} onDeleted={reload} />
+      ))}
+
+      {kbDocs.length > 0 ? (
+        <>
+          <h3 className="font-serif text-xl mt-6">Knowledge base</h3>
+          {kbDocs.map((row) => (
+            <DocumentRow key={row.id} row={row} onDeleted={reload} />
+          ))}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+const KB_ACCEPTED = [
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/msword",
+  "text/plain",
+];
+
+/** Knowledge base document upload — stores PDFs, Word docs, or plain text files as extra
+ * context that the LLM can draw on when answering form questions and drafting answers. */
+export function KnowledgeBaseSection() {
+  const [rows, setRows] = useState<DocumentRecord[] | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  async function reload() {
+    const all = await db.documents.toArray();
+    setRows(all.filter((r) => r.kind === "knowledge_base"));
+  }
+
+  useEffect(() => {
+    void reload();
+  }, []);
+
+  async function handleFile(file: File) {
+    const mimeType = KB_ACCEPTED.includes(file.type) ? file.type : file.name.endsWith(".txt") ? "text/plain" : "";
+    if (!mimeType) {
+      setError("Upload a PDF, Word (.docx), or plain text (.txt) file.");
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    setUploading(true);
+    try {
+      const { extractText } = await import("../../src/documents/extractText");
+      const text = await extractText(file, mimeType);
+      if (!text.trim()) throw new Error("Could not extract any text from that file.");
+      const now = new Date().toISOString();
+      await db.documents.add({
+        id: crypto.randomUUID(),
+        schemaVersion: 1,
+        kind: "knowledge_base",
+        fileName: file.name,
+        mimeType,
+        parsedText: text,
+        createdAt: now,
+        blob: file,
+      });
+      setNotice(`"${file.name}" added to your knowledge base.`);
+      await reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not process that file.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function handleDrop(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const file = event.dataTransfer.files[0];
+    if (file) void handleFile(file);
+  }
+
+  return (
+    <div className="space-y-4">
+      <header>
+        <h2 className="font-serif text-3xl">Knowledge base</h2>
+        <p className="mt-1 text-sm text-muted leading-6">
+          Upload extra documents — portfolios, cover letters, reference letters, or any text — that Jobsmith
+          can use as additional context when answering form questions and drafting answers. Stored locally in
+          this browser, never sent anywhere except to the AI when you trigger a fill.
+        </p>
+      </header>
+
+      {/* Drop zone */}
+      <div
+        onDrop={handleDrop}
+        onDragOver={(e) => e.preventDefault()}
+        className="rounded-lg border-2 border-dashed border-line p-6 text-center cursor-pointer hover:border-moss transition-colors"
+        onClick={() => document.getElementById("kb-file-input")?.click()}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => e.key === "Enter" && document.getElementById("kb-file-input")?.click()}
+        aria-label="Upload knowledge base document"
+      >
+        <input
+          id="kb-file-input"
+          type="file"
+          accept=".pdf,.docx,.doc,.txt"
+          className="sr-only"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void handleFile(file);
+            e.target.value = "";
+          }}
+        />
+        <div className="flex flex-col items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-muted">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line x1="12" y1="11" x2="12" y2="17" />
+            <polyline points="9 14 12 11 15 14" />
+          </svg>
+          <p className="text-sm text-ink font-medium">
+            {uploading ? "Processing…" : "Drop a file here or click to browse"}
+          </p>
+          <p className="text-xs text-muted">PDF, Word (.docx), or plain text (.txt)</p>
+        </div>
+      </div>
+
+      {error ? <p className="text-sm text-clay">{error}</p> : null}
+      {notice ? <p className="text-sm text-moss-dark">{notice}</p> : null}
+
+      {rows === null ? <p className="text-sm text-muted">Loading…</p> : null}
+      {rows?.length === 0 ? (
+        <Card>
+          <p className="text-sm text-muted">
+            No knowledge base documents yet. Upload a file above to get started.
           </p>
         </Card>
       ) : null}

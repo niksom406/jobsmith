@@ -1,11 +1,13 @@
 import { normalizeQuestion } from "../src/answerBank/matching";
 import { mapUnmatchedFields } from "../src/llm/prompts/mapFields";
+import { agentFillFields } from "../src/llm/prompts/agentFillField";
 import { testOpenAiConnection } from "../src/llm/testConnection";
 import { getAnswerBankRequestSchema, saveAnswerRequestSchema } from "../src/messaging/answerBankTypes";
 import { draftAnswersRequestSchema } from "../src/messaging/draftTypes";
 import { getCvFileRequestSchema } from "../src/messaging/documentTypes";
 import { blobToBase64 } from "../src/storage/bytes";
 import { mapFieldsRequestSchema } from "../src/messaging/mapFieldsTypes";
+import { agentFillRequestSchema } from "../src/messaging/agentFillTypes";
 import { testConnectionRequestSchema, testConnectionResultSchema } from "../src/messaging/types";
 import { draftFieldAnswerRequestSchema } from "../src/messaging/draftFieldTypes";
 import {
@@ -16,6 +18,7 @@ import {
 } from "../src/messaging/applicationTypes";
 import { createDefaultSettings, settingsSchema } from "../src/schemas/settings";
 import { createEmptyProfile, profileSchema } from "../src/schemas/profile";
+import { createEmptyPreferences, preferencesSchema } from "../src/schemas/preferences";
 import { chromeLocalArea, LOCAL_KEYS } from "../src/storage/localStore";
 import { db } from "../src/storage/db";
 import { handleDraftAnswersRequest } from "../src/llm/prompts/handleDraftAnswers";
@@ -24,6 +27,8 @@ import { draftCoverLetterRequestSchema } from "../src/messaging/coverLetterTypes
 import { draftAnswerVariants } from "../src/llm/prompts/draftAnswer";
 import { buildCvDraftContext } from "../src/autofill/cvDraftContext";
 import { getCompanyBrief } from "../src/company/companyBrief";
+import { buildAgentProfileSummary } from "../src/llm/prompts/agentFillField";
+import { flattenProfileValues } from "../src/autofill/profileValues";
 import { defineBackground } from "wxt/utils/define-background";
 
 export default defineBackground(() => {
@@ -245,6 +250,58 @@ export default defineBackground(() => {
           sendResponse({ ok: true, mappings });
         } catch (error) {
           sendResponse({ ok: false, error: error instanceof Error ? error.message : "Could not map the remaining fields." });
+        }
+      })();
+      return true;
+    }
+
+    const agentFill = agentFillRequestSchema.safeParse(message);
+    if (agentFill.success) {
+      void (async () => {
+        const stored = await chromeLocalArea.get([LOCAL_KEYS.settings, LOCAL_KEYS.profile, LOCAL_KEYS.preferences]);
+        const settingsParsed = settingsSchema.safeParse(stored[LOCAL_KEYS.settings]);
+        const profileParsed = profileSchema.safeParse(stored[LOCAL_KEYS.profile]);
+        const preferencesParsed = preferencesSchema.safeParse(stored[LOCAL_KEYS.preferences]);
+        const settings = settingsParsed.success ? settingsParsed.data : createDefaultSettings();
+        const profile = profileParsed.success ? profileParsed.data : createEmptyProfile();
+        const preferences = preferencesParsed.success ? preferencesParsed.data : createEmptyPreferences();
+
+        if (!settings.apiKey) {
+          sendResponse({ ok: false, error: "No OpenAI API key is set." });
+          return;
+        }
+
+        // Build a comprehensive plain-text profile summary so the LLM can reason about all facts
+        // (city, country, relocation, sponsorship, etc.) when answering ambiguous questions.
+        const values = flattenProfileValues(profile, preferences);
+        const profileSummary = buildAgentProfileSummary({
+          name: profile.name,
+          email: profile.email,
+          phone: profile.phone,
+          address: profile.address,
+          currentTitle: values["work.title"] ?? "",
+          currentCompany: values["work.company"] ?? "",
+          sponsorshipNeeded: preferences.sponsorshipNeeded,
+          relocation: preferences.relocation,
+          remotePreference: preferences.remotePreference,
+          noticePeriod: preferences.noticePeriod,
+          salaryAmount: preferences.salaryExpectation.amount,
+          salaryCurrency: preferences.salaryExpectation.currency,
+          rightToWork: preferences.rightToWork,
+          willingnessToTravel: preferences.willingnessToTravel,
+          skills: profile.skills,
+        });
+
+        try {
+          const answers = await agentFillFields({
+            apiKey: settings.apiKey,
+            model: settings.models.parse,
+            fields: agentFill.data.payload.fields,
+            profileSummary,
+          });
+          sendResponse({ ok: true, answers });
+        } catch (error) {
+          sendResponse({ ok: false, error: error instanceof Error ? error.message : "Could not agent-fill the fields." });
         }
       })();
       return true;

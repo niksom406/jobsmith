@@ -27,7 +27,6 @@ export function applySensitiveDefaults(fields: DetectedField[], defaults: Sensit
   for (const field of fields) {
     const category = detectSensitiveCategory(field);
     if (!category) continue;
-    excludedFieldIds.add(field.id);
 
     const choice = defaults.categories[category];
     if (choice.mode === "ask_every_time") {
@@ -36,6 +35,7 @@ export function applySensitiveDefaults(fields: DetectedField[], defaults: Sensit
     }
 
     if (!isEmpty(field.element)) {
+      excludedFieldIds.add(field.id);
       outcomes.push({ fieldId: field.id, status: "skipped_not_empty" });
       continue;
     }
@@ -68,6 +68,7 @@ export function applySensitiveDefaults(fields: DetectedField[], defaults: Sensit
           setRadioGroup(groupElements as HTMLInputElement[], optionValue);
         }
       }
+      excludedFieldIds.add(field.id);
       outcomes.push({ fieldId: field.id, status: "filled", previewValue: option?.label ?? optionValue });
       continue;
     }
@@ -89,6 +90,7 @@ export function applySensitiveDefaults(fields: DetectedField[], defaults: Sensit
           undo.push({ element: field.element, kind: "select", previousValue: (field.element as HTMLSelectElement).value });
           setSelectValue(field.element as HTMLSelectElement, matched.option.value);
         }
+        excludedFieldIds.add(field.id);
         outcomes.push({ fieldId: field.id, status: "filled", previewValue: matched.option.label });
       } else {
         outcomes.push({ fieldId: field.id, status: "skipped_low_confidence" });
@@ -108,6 +110,7 @@ export function applySensitiveDefaults(fields: DetectedField[], defaults: Sensit
           });
           setRadioGroup(groupElements as HTMLInputElement[], matched.option.value);
         }
+        excludedFieldIds.add(field.id);
         outcomes.push({ fieldId: field.id, status: "filled", previewValue: matched.option.label });
       } else {
         outcomes.push({ fieldId: field.id, status: "skipped_low_confidence" });

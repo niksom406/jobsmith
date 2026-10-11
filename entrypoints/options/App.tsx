@@ -16,6 +16,7 @@ import {
   DataSection,
   DocumentsSection,
   InvalidRecord,
+  KnowledgeBaseSection,
   SensitiveSection,
   SitesSection,
 } from "./OtherSections";
@@ -26,6 +27,7 @@ const NAV = [
   ["profile", "Profile"],
   ["preferences", "Preferences"],
   ["documents", "Documents"],
+  ["knowledge", "Knowledge base"],
   ["answers", "Answer bank"],
   ["applications", "Applications"],
   ["sensitive", "Sensitive fields"],
@@ -75,9 +77,13 @@ export default function App() {
     <div className="mx-auto grid min-h-screen max-w-6xl gap-8 px-6 py-8 md:grid-cols-[220px_1fr]">
       <aside>
         <div className="flex items-start justify-between gap-2">
-          <div>
-            <p className="font-serif text-2xl">Jobsmith</p>
-            <p className="mt-1 text-sm text-muted">Settings stay in this browser.</p>
+          <div className="flex items-center gap-2.5">
+            {/* Jobsmith logo mark */}
+            <img src={chrome.runtime.getURL("/icon/128.png")} alt="Jobsmith Logo" width="32" height="32" style={{ flexShrink: 0, borderRadius: "6px" }} />
+            <div>
+              <p className="font-serif text-2xl" style={{ lineHeight: 1.1 }}>Jobsmith</p>
+              <p className="text-xs text-muted" style={{ marginTop: "2px" }}>Settings stay in this browser.</p>
+            </div>
           </div>
           <ThemeToggle />
         </div>
@@ -120,6 +126,7 @@ export default function App() {
           )
         ) : null}
         {section === "documents" ? <DocumentsSection /> : null}
+        {section === "knowledge" ? <KnowledgeBaseSection /> : null}
         {section === "answers" ? <AnswerBankSection /> : null}
         {section === "applications" ? <ApplicationsSection /> : null}
         {bundle && section === "sensitive" ? (

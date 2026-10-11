@@ -77,7 +77,7 @@ export function CoverLetterPanel() {
       <p className="text-sm text-muted">
         Written only from your CV, the job description on this page, and the notes you add below — never invented.
       </p>
-      <button type="button" onClick={() => void loadJd()} className="rounded-md border border-line bg-card px-3 py-2 text-sm">
+      <button type="button" onClick={() => void loadJd()} className="rounded-md bg-[#C9A84C] text-[#1a1500] hover:bg-[#e8c96a] px-3 py-2 text-sm font-medium border border-[#C9A84C] shadow-sm">
         Read job description from this page
       </button>
       {jd?.source === "none" ? (

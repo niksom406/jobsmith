@@ -5,7 +5,7 @@ export const DOCUMENT_VERSION = 1;
 export const documentMetaSchema = z.strictObject({
   id: z.string().min(1),
   schemaVersion: z.literal(DOCUMENT_VERSION),
-  kind: z.enum(["cv", "cover_letter"]),
+  kind: z.enum(["cv", "cover_letter", "knowledge_base"]),
   fileName: z.string(),
   mimeType: z.string(),
   parsedText: z.string(),

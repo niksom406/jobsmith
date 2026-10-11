@@ -23,6 +23,8 @@ import { isAutomationBlocked } from "../../src/sites/access";
 import { getAnswerBankRequestSchema, type AnswerBankEntrySummary } from "../../src/messaging/answerBankTypes";
 import { fieldsForMapping } from "../../src/llm/prompts/mapFields";
 import { mapFieldsRequestSchema, mapFieldsResultSchema } from "../../src/messaging/mapFieldsTypes";
+import { agentFillRequestSchema, agentFillResultSchema } from "../../src/messaging/agentFillTypes";
+import type { AgentFieldInput } from "../../src/llm/prompts/agentFillField";
 import { chromeLocalArea, LOCAL_KEYS, loadStored, saveStored } from "../../src/storage/localStore";
 import { createEmptyFieldOverrides, fieldOverridesSchema } from "../../src/schemas/fieldOverrides";
 import { fieldOverridesMigrations } from "../../src/schemas/migrateEntities";
@@ -293,6 +295,114 @@ export default defineContentScript({
     }
 
     /**
+     * Layer 3 — LLM Agent Reasoning: for fields still unmatched after heuristics + LLM mapping,
+     * sends the full question + options to the LLM along with the candidate's full profile context
+     * so it can reason semantically. This handles:
+     * - Radio yes/no questions like "Are you able to work from our NYC/London office 5 days a week?"
+     * - Location comboboxes that require typing a city name rather than picking from a static list
+     * - Any question where keyword matching is insufficient but the answer IS in the profile
+     *
+     * Only fills when the model is confident. Never invents facts.
+     */
+    async function fillFromAgentReasoning(
+      unmatched: DetectedField[],
+    ): Promise<{ outcomes: FillOutcome[]; undo: UndoEntryType[]; stillUnmatched: DetectedField[] }> {
+      // Agent reasoning handles radio (yes/no questions), select, and short text.
+      // Long text essays go to fillFromAiDraft. File inputs are never agent-filled.
+      const eligible = unmatched.filter(
+        (field) =>
+          field.kind === "radio" ||
+          field.kind === "select" ||
+          (field.kind === "text" && !isLongTextField(field.element)),
+      );
+      if (eligible.length === 0) return { outcomes: [], undo: [], stillUnmatched: unmatched };
+
+      const agentFields: AgentFieldInput[] = eligible.map((field) => ({
+        id: field.id,
+        label: field.label,
+        kind: field.kind === "text" ? "text" : (field.kind as "radio" | "select"),
+        options: field.options.map((option) => option.label),
+      }));
+
+      let result: unknown;
+      try {
+        result = await chrome.runtime.sendMessage(
+          agentFillRequestSchema.parse({
+            type: "agent-fill-fields",
+            payload: {
+              fields: agentFields,
+              // profileSummary is built server-side in background.ts from stored profile + preferences;
+              // the content script sends an empty string as a placeholder only.
+              profileSummary: "",
+            },
+          }),
+        );
+      } catch {
+        return { outcomes: [], undo: [], stillUnmatched: unmatched };
+      }
+
+      const parsed = agentFillResultSchema.safeParse(result);
+      if (!parsed.success || !parsed.data.ok) {
+        return { outcomes: [], undo: [], stillUnmatched: unmatched };
+      }
+
+      const outcomes: FillOutcome[] = [];
+      const undo: UndoEntryType[] = [];
+      const filledFieldIds = new Set<string>();
+
+      const byId = new Map(eligible.map((field) => [field.id, field]));
+      for (const answer of parsed.data.answers) {
+        if (!answer.confident || !answer.value) continue;
+        const field = byId.get(answer.fieldId);
+        if (!field) continue;
+        if (!isEmpty(field.element) && field.kind !== "radio") continue;
+        if (field.kind === "radio" && field.groupElements?.some((element) => (element as HTMLInputElement).checked)) continue;
+
+        if (field.kind === "radio" && field.groupElements) {
+          const matched = resolveDropdownOption(answer.value, field.options);
+          if (!matched.option || matched.confidence === "low") continue;
+          const groupElements = field.groupElements;
+          const first = groupElements[0];
+          if (!first) continue;
+          undo.push({
+            element: first,
+            kind: "radio",
+            previousValue: "",
+            groupElements,
+            previousGroupChecked: groupElements.map((element) => (element as HTMLInputElement).checked),
+          });
+          setRadioGroup(groupElements as HTMLInputElement[], matched.option.value);
+          outcomes.push({ fieldId: field.id, status: "filled", previewValue: matched.option.label });
+          filledFieldIds.add(field.id);
+          continue;
+        }
+
+        if (field.kind === "select") {
+          const matched = resolveDropdownOption(answer.value, field.options);
+          if (!matched.option || matched.confidence === "low") continue;
+          const element = field.element as HTMLSelectElement;
+          undo.push({ element, kind: "select", previousValue: element.value });
+          setSelectValue(element, matched.option.value);
+          outcomes.push({ fieldId: field.id, status: "filled", previewValue: matched.option.label });
+          filledFieldIds.add(field.id);
+          continue;
+        }
+
+        if (field.kind === "text") {
+          const element = field.element as HTMLInputElement;
+          undo.push({ element, kind: "text", previousValue: element.value });
+          setTextValue(element, answer.value);
+          outcomes.push({ fieldId: field.id, status: "filled", previewValue: answer.value });
+          filledFieldIds.add(field.id);
+          continue;
+        }
+      }
+
+      const stillUnmatched = unmatched.filter((field) => !filledFieldIds.has(field.id));
+      return { outcomes, undo, stillUnmatched };
+    }
+
+    /**
      * Last resort for long-text questions nothing else could match: drafts an answer from the CV,
      * notes, and this page's job description, the same way the "Draft an answer" panel does — but
      * automatically, for every remaining long-text field at once. Only runs if a job description
@@ -451,6 +561,46 @@ export default defineContentScript({
         });
         overrideBannerRemovers.set(field.id, remove);
       });
+
+      // Checkbox save: manually checking/unchecking a checkbox with a proper question label
+      // saves "Yes" or "No" against the actual question text — fixes answer bank showing "Yes/Yes"
+      // with no real question because checkboxes were previously never caught here.
+      document.addEventListener("change", (event) => {
+        if (isAutomationBlocked(window.location.href)) return;
+        const target = event.target;
+        if (!(target instanceof HTMLInputElement) || target.type !== "checkbox") return;
+        if (wasSetByJobsmith(target)) return;
+
+        const fields = detectFields(document);
+        const field = fields.find((candidate) => candidate.element === target);
+        if (!field || !field.label) return;
+
+        const answerLabel = target.checked ? "Yes" : "No";
+        overrideBannerRemovers.get(field.id)?.();
+        const remove = showSaveAnswerBanner(target, {
+          question: field.label,
+          answer: answerLabel,
+          onSave: () => {
+            void saveFieldOverride(field, literalOverrideValue(answerLabel));
+            void chrome.runtime.sendMessage(
+              saveAnswerRequestSchema.parse({
+                type: "save-answer",
+                payload: {
+                  question: field.label,
+                  answer: answerLabel,
+                  fieldType: "checkbox",
+                  company: "",
+                  role: "",
+                },
+              }),
+            );
+          },
+          onDismiss: () => {
+            overrideBannerRemovers.delete(field.id);
+          },
+        });
+        overrideBannerRemovers.set(field.id, remove);
+      });
     }
     attachOverrideSavePrompt();
 
@@ -535,9 +685,10 @@ export default defineContentScript({
           const bank = await fetchAnswerBank();
           const fromBank = fillFromAnswerBank(unmatched, bank);
           const fromMapping = await fillFromLlmMapping(fromBank.stillUnmatched, values);
+          const fromAgent = await fillFromAgentReasoning(fromMapping.stillUnmatched);
 
           const fileOutcomes = await attachStoredCvToFileInputs(fields);
-          const fromAiDraft = await fillFromAiDraft(fromMapping.stillUnmatched, preferences);
+          const fromAiDraft = await fillFromAiDraft(fromAgent.stillUnmatched, preferences);
 
           // Workday renders most pickers as custom widgets rather than native <select>/<input
           // type="date">, so they never show up in `fields` at all -- this runs as a separate pass
@@ -553,11 +704,12 @@ export default defineContentScript({
             ...(currentAdapterId === "workday" ? fillWorkdayDateGroups(document, values) : []),
           ];
 
-          lastUndo = [...undo, ...fromBank.undo, ...fromMapping.undo, ...sensitiveResult.undo, ...rightToWorkResult.undo, ...fromAiDraft.undo];
+          lastUndo = [...undo, ...fromBank.undo, ...fromMapping.undo, ...fromAgent.undo, ...sensitiveResult.undo, ...rightToWorkResult.undo, ...fromAiDraft.undo];
           const allOutcomes = [
             ...outcomes,
             ...fromBank.outcomes,
             ...fromMapping.outcomes,
+            ...fromAgent.outcomes,
             ...sensitiveResult.outcomes,
             ...rightToWorkResult.outcomes,
             ...fileOutcomes,

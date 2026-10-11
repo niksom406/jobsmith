@@ -133,6 +133,13 @@ export function PreferencesSection({
           />
         </div>
       </Card>
+      <Card>
+        <h3 className="font-serif text-xl">Links</h3>
+        <div className="space-y-4">
+          <TextField label="LinkedIn profile" value={draft.linkedin ?? ""} onChange={(linkedin) => update({ linkedin })} type="url" />
+          <TextField label="GitHub profile" value={draft.github ?? ""} onChange={(github) => update({ github })} type="url" />
+        </div>
+      </Card>
       <SaveRow
         pending={pending}
         notice={notice}

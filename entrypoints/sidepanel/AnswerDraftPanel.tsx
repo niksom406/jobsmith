@@ -69,7 +69,7 @@ export function AnswerDraftPanel() {
         rows={2}
       />
       <div className="flex flex-wrap gap-2">
-        <button type="button" onClick={() => void loadJd()} className="rounded-md border border-line bg-card px-3 py-2 text-sm">
+        <button type="button" onClick={() => void loadJd()} className="rounded-md bg-[#C9A84C] text-[#1a1500] hover:bg-[#e8c96a] px-3 py-2 text-sm font-medium border border-[#C9A84C] shadow-sm">
           Read job description from this page
         </button>
       </div>

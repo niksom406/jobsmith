@@ -103,6 +103,7 @@ export function CvOnboarding({
             accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             aria-label="Upload CV"
             disabled={busy || !settings.apiKey}
+            className="block w-full text-sm text-muted file:mr-4 file:py-2.5 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-[#C9A84C] file:text-[#1a1500] hover:file:bg-[#e8c96a] cursor-pointer disabled:opacity-50"
             onChange={(event) => {
               const file = event.target.files?.[0];
               if (file) void handleFile(file);

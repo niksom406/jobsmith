@@ -78,9 +78,9 @@ export function applyRightToWork(fields: DetectedField[], rightToWork: Preferenc
   for (const field of fields) {
     if (field.kind !== "select" && field.kind !== "radio") continue;
     if (!/right to work/i.test(field.label)) continue;
-    excludedFieldIds.add(field.id);
 
     if (!isEmpty(field.element)) {
+      excludedFieldIds.add(field.id);
       outcomes.push({ fieldId: field.id, status: "skipped_not_empty" });
       continue;
     }
@@ -118,6 +118,7 @@ export function applyRightToWork(fields: DetectedField[], rightToWork: Preferenc
         setRadioGroup(groupElements as HTMLInputElement[], matched.option.value);
       }
     }
+    excludedFieldIds.add(field.id);
     outcomes.push({ fieldId: field.id, status: "filled", previewValue: matched.option.label });
   }
 

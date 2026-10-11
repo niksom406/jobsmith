@@ -78,8 +78,8 @@ export function Button({
   disabled?: boolean;
 }) {
   const tones = {
-    primary: "bg-moss text-white hover:bg-moss-dark",
-    quiet: "border border-line bg-card text-ink hover:border-moss",
+    primary: "bg-[#C9A84C] text-[#1a1500] hover:bg-[#e8c96a] font-medium border border-[#C9A84C] shadow-sm",
+    quiet: "border border-line bg-card text-ink hover:border-[#C9A84C]",
     danger: "bg-clay text-white",
   };
   return (
