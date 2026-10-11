@@ -1,8 +1,105 @@
 # Jobsmith
 
-Jobsmith is a Chrome extension (Manifest V3) that fills job applications from a CV kept in the browser and helps draft long-text answers. There is no account and no Jobsmith server — each person uses their own browser, their own data, and their own OpenAI API key.
+**Fill real job applications from a CV that stays in the browser.**
 
-## Setup
+Jobsmith is a Chrome extension for people applying to a lot of roles. It reads a CV, keeps a profile and preferences on the device, and fills the forms those applications actually ask — name, location, sponsorship, notice period, right to work, and the long questions that need a written answer. There is no Jobsmith account and no Jobsmith server. The only network call is the one you choose to make to OpenAI with your own API key.
+
+![Platform](https://img.shields.io/badge/platform-Chrome%20MV3-1c1915)
+![Language](https://img.shields.io/badge/language-TypeScript-3178c6)
+![UI](https://img.shields.io/badge/UI-React%20%2B%20Tailwind-1f6b4a)
+![AI](https://img.shields.io/badge/AI-OpenAI%20Responses%20API-412991)
+![Data](https://img.shields.io/badge/data-stays%20on%20device-8f3d2d)
+
+## Overview
+
+A job application is a pile of repeated questions with a few that actually matter. Jobsmith treats them differently.
+
+Structured fields — name, email, city, salary, sponsorship, right to work — come from the profile and preferences you already saved. Open questions — "what will you bring to the team?", "tell us a fun fact" — are drafted from the CV and the job description on the page, then shown for you to edit. Yes/no questions that have no saved fact are left blank until you answer them once; Jobsmith then asks if it should remember that answer for next time.
+
+Nothing is submitted for you. Fill writes into empty fields. You review the page and press the company's own Submit button.
+
+Screenshots below are the real Options page and side panel, loaded with a demo profile (Ada Lovelace), not a live applicant.
+
+## Screenshots
+
+**Profile, kept in this browser.** Upload a PDF or DOCX CV and Jobsmith parses it into this screen so you can correct it before anything is filled.
+
+![Jobsmith profile settings](docs/images/options-profile.png)
+
+**Preferences the CV usually does not contain.** Notice period, salary, sponsorship, relocation, and where you have the right to work.
+
+![Jobsmith preferences](docs/images/options-preferences.png)
+
+**Sites are off until you turn one on.** Greenhouse, Lever, Ashby, SmartRecruiters, and Workday each ask Chrome for that host only. Any other careers page can be enabled from the tab you are on. LinkedIn stays off.
+
+![Jobsmith site access](docs/images/options-sites.png)
+
+**The side panel on an application.** Preview shows what would be filled and why. Fill is the only action that writes to the page. Green is filled, including answers drafted from the CV. Red is left for you.
+
+![Jobsmith side panel after preview](docs/images/sidepanel-preview.png)
+
+## How it works
+
+1. **Upload a CV.** Text is extracted locally (PDF via pdf.js, DOCX via mammoth). Only that text is sent to OpenAI, and only to turn it into a structured profile you then review.
+2. **Set the facts a CV does not state.** Notice period, salary, start date, sponsorship, relocation, remote preference, travel, and right to work live in Preferences.
+3. **Open an application and allow that site.** The toolbar icon opens the side panel. Jobsmith does not run on a host you have not allowed, and it refuses LinkedIn even if a permission exists.
+4. **Preview, then fill.** Preview runs the same matching as Fill and changes nothing. Fill writes only into empty fields. Undo puts back what was there before that fill.
+5. **Edit anything that is wrong.** Leaving a field, or picking Yes or No yourself, offers to save that question and answer for this site and for similar questions later.
+
+Matching runs in layers, and a later layer only sees what the earlier ones could not answer:
+
+| Layer | What it does |
+| --- | --- |
+| Heuristics | Synonyms, autocomplete, and labels. "Where are you currently based?" maps to your city. The longest matching synonym wins, so address line 2 is not filled with line 1. |
+| Answer bank | A saved answer to a similar question, matched locally. No network call. |
+| Field mapping | The model may map a leftover field to a profile key. It sees labels and option text, not your values, and a mapping is used only when the model marks it confident. |
+| Agent reasoning | For a yes/no or short field that still has no match, the model may answer from the profile when it is confident. It does not invent a fact that is not there. |
+| Draft | Long questions are written from the CV, your notes, and the job description on the page. A second pass flags claims that are not in the CV or notes. |
+
+Dropdowns and radios resolve with the same rule everywhere: exact text, then a known alias, then a numeric range ("29" into "25–34", "50000" into "£40,000 – £50,000"). If the match is weak, or the number sits in more than one range, the field is left blank.
+
+## How it's built
+
+Jobsmith is a Manifest V3 extension. The content script, the side panel, and the options page are separate surfaces. They talk with typed messages, checked with Zod, so a bad payload is dropped instead of half-applied.
+
+```text
+job page (content script)
+    detect fields, fill, undo, save-answer banner
+        │  chrome.runtime messages
+        ▼
+background service worker
+    OpenAI calls, answer bank, application log, CV file
+        │
+        ▼
+options page + side panel
+    profile, preferences, preview, drafts
+```
+
+| Piece | Role |
+| --- | --- |
+| Content script | Finds inputs, selects, radios, textareas, and common ARIA comboboxes. Fills them. Never clicks Submit, Next, or a CAPTCHA. |
+| Background | Holds the OpenAI key. Parses the CV, maps fields, drafts answers and cover letters, and writes the local application log. |
+| Options | Profile, preferences, sensitive defaults, sites, answer bank, documents, knowledge base, and export. |
+| Side panel | Preview, Fill, Undo, per-field overrides, answer drafts, and cover letters. |
+| Storage | `chrome.storage.local` for the profile and settings. IndexedDB (Dexie) for documents, the answer bank, and applications. Sensitive values can be encrypted with a passphrase that lives only in `chrome.storage.session`. |
+
+The stack is TypeScript, React, Tailwind, WXT, Zod, Dexie, pdf.js, and mammoth. Tests run in Vitest against the detection and fill logic, including Greenhouse and Lever fixture pages. Those fixtures are representative markup, not captured live boards, so a passing test is a check of the matcher, not a promise about every live ATS layout.
+
+Default models, both editable in Settings → AI:
+
+- `gpt-6-luna` for parsing, field mapping, and answers
+- `gpt-6.1-sol` when Better quality is on
+
+## What it never does
+
+- Clicks Submit, Next, or any other control that moves the application forward.
+- Touches a CAPTCHA.
+- Runs on LinkedIn or `lnkd.in`.
+- Sends gender, ethnicity, disability, veteran status, sexual orientation, religion, or date of birth to the model, or guesses them.
+- Invents an employer, a number, or a skill that is not in the CV or in notes you typed.
+- Logs CV text or drafted answers in a production build.
+
+## Run it
 
 ```sh
 npm install
@@ -10,75 +107,20 @@ npm test
 npm run dev
 ```
 
-In Chrome, open `chrome://extensions`, turn on Developer mode, and load the unpacked extension from `.output/chrome-mv3-dev` (dev) or `.output/chrome-mv3` (production build, see below). Open the extension's options page to upload a CV, review your profile, and set preferences. The toolbar icon opens the side panel on the job page you're applying from.
+In Chrome, open `chrome://extensions`, turn on Developer mode, and load the unpacked extension from `.output/chrome-mv3-dev`. `npm run build` writes a production build to `.output/chrome-mv3`. `npm run zip` packs it.
 
-`npm run build` writes a production build to `.output/chrome-mv3`. `npm run zip` packs it.
-
-## What this version does
-
-- **Onboarding.** Upload a CV (PDF or DOCX), extracts the text locally, sends only that text to OpenAI to parse into a structured profile, then a review screen and a short preferences wizard (sponsorship, notice period, salary, start date, relocation).
-- **Autofill.** On an enabled site, "Detect fields" reads the form (labels, `aria-*`, name/autocomplete, nearby text) and "Fill" writes your profile and preferences into empty fields only, never overwriting something you already typed. Matching runs in three layers: synonym/heuristic matching first, a saved-answer-bank lookup for long-text questions, then an LLM fallback for whatever's still unmatched (background sends the model only each field's id/label/kind/option labels — never a value — and only applies a mapping it marked confident). Dropdown and radio values always go through the same confidence-scored matcher (exact → known alias → no guess on low confidence), on every layer. "Undo" reverts the fields the last fill touched. The stored CV is attached to empty file-upload inputs automatically.
-- **Adapters.** Greenhouse and Lever have dedicated adapters and were tested against representative fixture pages (see Known limitations — these are hand-built fixtures, not captured live pages). Ashby, SmartRecruiters, and Workday use the same general-purpose detection without site-specific quirk handling yet.
-- **Learning.** When you type an answer into a long-text field and move on, a small on-page prompt offers to save it to the answer bank. Future questions that are a close match (judged locally, no network call) reuse a saved answer instead of asking the model again.
-- **AI answers.** The side panel can draft 2–3 answer variants (different angles: motivation, skills fit, company mission) for a pasted or on-page question, using the job description (read from the page's structured data or a visible block, or pasted by you) and a company brief. The brief is looked up in this order: a local cache by domain, then OpenAI's hosted web_search tool (the model actually searches the internet — the search runs on OpenAI's servers, so this needs no extra host permission beyond `api.openai.com`), then the company's own `/about` page, then you're asked for a line or two. A separate pass flags any claim in the draft that isn't backed by your CV or notes. Nothing is invented; if the model can't find a job description or company brief after all of that, it says so instead of guessing.
-- **Auto-drafted long-text answers.** During "Fill", any open-ended question (textarea, or a long free-text field) that the heuristic/answer-bank/LLM-mapping layers couldn't match is drafted automatically — same facts-only rule, same `draftAnswerVariants` call as the manual panel, using whatever job description Jobsmith found on the page. The one thing that stops this: no job description detected anywhere on the page. In that case the field is left as "Not recognised" rather than drafting something generic. Each auto-drafted field shows a 🔄 "Regenerate" button in the side panel to swap in a different variant/tone in the same field, and a ↩ "Previous version" button to step that one field back to what it held before the last regenerate — separate from the page-wide "Undo", which reverts every field Jobsmith touched this fill.
-- **Field status colours.** The side panel's field list is colour-coded: green with an arrow for anything filled (by a profile match or an AI draft), red for anything that needs your attention (not recognised, or deliberately left for you — e.g. a sensitive field), grey for anything that's neither a problem nor an action (already had a value, no data to use).
-- **ATS vendor name never leaks into a company brief.** A job board's own domain (e.g. `jobs.ashbyhq.com`) and, separately, its own extracted name (e.g. an unbranded board that still reports its page title as "Ashby") are both filtered out before Jobsmith searches for a company brief — so a drafted answer describes the employer, not the ATS platform hosting their listing.
-- **Dates fill like everything else does — correctly, or not at all.** A saved date (start date, date of birth, etc.) typed in any common format is converted to the exact `YYYY-MM-DD` a native date picker requires before Jobsmith sets it; if the format is ambiguous, the field is reported as needing your input instead of silently staying empty while showing "filled".
-- **Binary yes/no dropdowns and radios match on the words actually present**, not just a short hardcoded alias list — so "Yes, I will require sponsorship..." / "No, I will not..." style options fill correctly even when the exact phrasing isn't one Jobsmith has seen before. It still never guesses: this only fires when the option text itself contains an explicit "yes" or "no".
-- **A radio question's label is its actual question, not its first option's own wrapping label.** When radios are grouped in a `<fieldset>` with a `<legend>` (a very common pattern), Jobsmith reads the question from the legend instead of from whatever text happens to wrap the first radio button (often just "Yes").
-- **Personal questions are answered from the CV again, without a bolted-on company closer.** A "fun fact about yourself" is drafted from anything personal in the CV (a hobby, language, unusual project, work highlight) — it no longer refuses just because there's no field labelled "fun fact". Role/experience answers stay CV-first and only mention the employer when it actually explains the fit, instead of always tacking on a company-brief sentence.
-- **Changing an answer asks whether to save it, including Yes/No.** Edit a long-text draft and leave the field: the same on-page banner offers to save it to the answer bank. Pick Yes or No on a radio (or choose a dropdown option) by hand and the banner offers to remember that question and answer — for this site, and for similar questions later. Jobsmith's own fill does not trigger the banner.
-- **AI drafts can use the logistics facts you've already saved.** Preferences (notice period, start date, salary expectation, sponsorship, relocation, remote preference, travel willingness, right to work) are handed to the model as known facts whenever it drafts an answer — manually, automatically during "Fill", or in a cover letter — so a question like "What's your availability?" is answered from the real saved notice period instead of declining for lack of information. Still never invented: the model is told to use a saved fact only when the question actually asks about it, and never to pad an honest "I don't have that information" with an unrelated detail from the job description or company brief just to meet a wording quota.
-- **Per-field overrides can now be a plain typed answer, not just a profile-field mapping.** Some questions (e.g. "Do you have Fintech experience?", "Can you travel to our London office 3 times a week?") have no corresponding profile field to map to at all — there's nothing to guess from. The side panel's field-override picker now has a second option: type the literal answer once ("Yes"), and it's remembered for that question on that site exactly like a profile-field mapping is, through the same confidence-scored fill path.
-- **"Where are you currently based?" fills from your saved city.** The city synonym list now includes based/located/current location phrasing, and if City in the profile is empty it falls back to the latest job's location. Typing a short answer like "London" also offers the on-page save banner (the old 8-character minimum skipped city names entirely).
-- **An essay question is never hijacked by a one-word synonym match.** "What relevant experience/skills will you bring?" used to match the "skills" synonym as a substring and get the raw profile skills list dumped in. Alias/substring matching now only applies to short, structured fields; any `<textarea>` or long text input instead falls through to the answer bank, then the AI-drafted-answer layer, which reads the full question and the job description rather than one keyword in it.
-- **Address line 2 no longer collides with address line 1.** Matching now prefers the most specific matching synonym across every profile field, not whichever field happens to be checked first — so "Address Line 2" resolves to line 2, not line 1.
-- **Sensitive dropdown/radio saved answers match the same way everything else does.** A saved "Indian" now matches an option labelled "Asian or Asian British - Indian", and a saved age matches an "Age group" bucket like "25-34" — instead of requiring the saved text to exactly equal the option's label.
-- **Salary/age-style bucketed dropdowns resolve from a plain saved number.** A saved salary of "50000" or age of "29" is matched against whichever option's range (e.g. "£40,000 - £50,000", "25-34", "65+") actually contains it — never guessed when the number falls in more than one range or none at all.
-- **"Do you have the right to work in `<country>`?" now has somewhere to look.** It's answered from the Right to work list in Preferences: "Yes" if that country is on the list, "No" if the list is non-empty but doesn't include it, and left for you if the list is still empty or the question doesn't name a country Jobsmith recognises.
-- **"Preview fill" is now genuinely read-only.** It runs the exact same matching/confidence logic as "Fill" — including sensitive defaults, right-to-work, and per-field overrides — without touching the page, and shows what each field *would* become plus a plain-English reason ("Why wasn't this filled?") for anything skipped. "Fill" is the only button that writes to the page.
-- **Per-field manual overrides, remembered per site.** Any field left unmatched or filled with the wrong thing can be mapped by hand, in the side panel's expanded field detail, to a specific profile field. The mapping is keyed by site + a stable signature of the field's kind and label (not its often-regenerated DOM id), stored locally, and reused automatically on every later fill of that site — Jobsmith doesn't need to be told twice.
-- **ARIA-combobox custom dropdowns are no longer treated as a Workday-only quirk.** The same confidence-scored combobox fill now runs on every site (Ashby and SmartRecruiters included), since the pattern itself — not the matching logic — turned out to be the only thing that was ever Workday-specific. The 3-input Month/Day/Year Workday date-group pattern stays gated to Workday, since that structure is genuinely specific to it.
-- **Application tracker.** Every successful "Fill" logs a local record (company, role, URL, date) under Options → Applications, auto-detected from the page's own JSON-LD/title where possible and editable there. Mark each one draft/filled/submitted/abandoned, or delete it — nothing here is sent anywhere.
-- **Cover letter drafting.** The side panel can draft a full cover letter (not just one answer) from the job description on the page, your CV, and optional notes, with the same facts-only rule and unsupported-claims check as every other drafted answer. It's a body only — no greeting or signature — ready to paste under your own letterhead.
-- **Dark mode.** A toggle (sun/moon icon) in both Options and the side panel header switches the whole UI between light and dark. The preference is stored in `localStorage`, shared between the two since they're pages under the same extension origin.
-- **Sensitive fields.** Gender, ethnicity, disability, veteran status, sexual orientation, religion, and date-of-birth/age fields are detected by their label and never sent to the model, matched by heuristics, or filled from a generic value map. Each category has its own default in Options → Sensitive: ask every time (leave blank for you to handle), always select "prefer not to say" when the field offers it, or fill from a value you saved once. Saved values are plain text by default; ticking "Protect saved values with a passphrase" in that same section encrypts them (PBKDF2-SHA256 + AES-GCM, native Web Crypto, no extra dependency) and caches the passphrase only in `chrome.storage.session` for that browser session — never written to disk, never synced, forgotten when the browser closes. Filling a form with an encrypted value needs that passphrase to be unlocked for the session; if it isn't, that category falls back to "ask every time" rather than guessing or failing partway through a fill.
-- **Site access.** Nothing is granted at install. Options → Sites lists one-click toggles for Greenhouse, Lever, Ashby, SmartRecruiters, and Workday, each requesting only that host pattern. "Enable Jobsmith on this site" requests the current tab's origin for any other company career page. LinkedIn and `lnkd.in` are refused even if a permission exists.
-- **Data.** Export/import a JSON file (API key optional on export). "Delete all data" clears everything in this browser.
-
-Default models, both editable in Settings → AI:
-
-- `gpt-6-luna` for parsing, field mapping, and answers
-- `gpt-6.1-sol` when "Better quality" is on
+Open the extension's options page to upload a CV and review the profile. The toolbar icon opens the side panel on the job page you are applying from.
 
 ## Permissions
 
 | Permission | Why |
 | --- | --- |
 | `storage` | Profile, preferences, sensitive-field defaults, and settings in this browser. |
-| `scripting` | Injects the content script that detects and fills fields, only on a site you've allowed. |
-| `sidePanel` | The panel that shows detected fields, fill/undo controls, and answer drafts. |
-| `activeTab` | Reads the tab you're using when you click "Enable Jobsmith on this site". |
-| `https://api.openai.com/*` | Your key calls OpenAI directly, from the background service worker. This host is not a browsing site. |
+| `scripting` | Injects the content script that detects and fills fields, only on a site you have allowed. |
+| `sidePanel` | The panel with preview, fill, undo, and drafts. |
+| `activeTab` | Reads the tab you are using when you click "Enable Jobsmith on this site". |
+| `https://api.openai.com/*` | Your key calls OpenAI from the background service worker. This host is not a browsing site. |
 
-Site access is **not** granted at install. `optional_host_permissions` includes `<all_urls>` because Chrome only allows a runtime prompt for origins covered by that list; Jobsmith never requests `<all_urls>` itself. Each site switch requests one host pattern, such as `https://*.greenhouse.io/*`, and "Enable Jobsmith on this site" requests only that page's origin.
+Site access is not granted at install. `optional_host_permissions` includes `<all_urls>` only because Chrome requires that list before it will show a runtime prompt. Jobsmith never requests `<all_urls>` itself. Each site switch requests one host pattern, such as `https://*.greenhouse.io/*`.
 
-Not requested: `tabs`, `webRequest`, or a blanket host grant. LinkedIn (`linkedin.com`, `lnkd.in`) is blocked in code as well, independent of any permission that's been granted.
-
-## What never happens
-
-- Jobsmith never clicks Submit, Next, or any other form-progression control. You review and submit everything yourself.
-- Jobsmith never interacts with a CAPTCHA.
-- Jobsmith does not run on LinkedIn Easy Apply or `lnkd.in`, regardless of permissions.
-- Gender, ethnicity, disability, veteran status, sexual orientation, religion, and date-of-birth/age values and labels are never included in a request to OpenAI.
-- AI-drafted answers only draw on your CV and the notes you typed; a verification pass flags anything in a draft that isn't backed by either.
-- No CV text, answer text, or saved answer is written to the console in a production build.
-
-## Known limitations and deviations from the original plan
-
-- **Test fixtures are hand-authored, not captured from live pages.** The plan was to save real public Greenhouse/Lever postings as HTML fixtures. What's in `tests/fixtures/html/` is representative markup I wrote by hand to match each platform's typical field structure, not a page capture. Treat the ≥90% fill-rate result from these fixtures as a check against the written detection logic, not a guarantee against live Greenhouse/Lever markup, which can differ or change.
-- **Playwright was not set up.** Form-filling tests run with Vitest + jsdom against the same fixture files instead, using the ambient jsdom document so `instanceof` checks match the real DOM classes. This covers the same fill-rate and non-overwrite assertions but doesn't exercise a real Chromium renderer or the built extension end to end.
-- **Ashby and SmartRecruiters use generic detection only** (no site-specific quirk handling yet). **Workday additionally gets a best-effort pass for its custom widgets**: ARIA combobox buttons (`role="combobox"`/`aria-haspopup="listbox"`) and three-input Month/Day/Year date groups. This has not been checked against a live Workday posting — see `ARCHITECTURE.md` §11 — and is conservative on purpose: a combobox or date group is only filled on a confident label-and-option match, a date group is only filled when its label maps to "earliest start date" specifically, and anything that reads as a sensitive category (by label) is skipped before it's ever opened or inspected, the same as every other sensitive field. There's no undo for these two widget types yet, unlike native fields.
-- **"Better quality" toggle** changes which model answer drafting and parsing use, but there's no cost estimate shown yet.
-- Workday boards on hosts like `company.wd1.myworkdayjobs.com` are more than one subdomain deep; the toggle covers the common pattern, but use "Enable Jobsmith on this site" if a particular Workday tenant's host doesn't match.
+Not requested: `tabs`, `webRequest`, or a blanket host grant.
